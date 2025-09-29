@@ -2,6 +2,7 @@
 #
 # Script Pembangunan Kernel
 # Diadaptasi dari build.sh yang disediakan.
+# Menambahkan fitur SukiSU-Ultra dengan flag KSU_ENABLE
 #
 
 # Keluar segera jika ada perintah yang gagal
@@ -9,6 +10,46 @@ set -eo pipefail
 
 ## Deklarasi Fungsi Utama
 #---------------------------------------------------------------------------------
+
+# Fungsi untuk mengirim pesan ke Telegram
+tg_post_msg() {
+    local message="$1"
+    curl -s -X POST "$BOT_MSG_URL" \
+        -d chat_id="$TG_CHAT_ID" \
+        -d "disable_web_page_preview=true" \
+        -d "parse_mode=html" \
+        -d text="$message"
+}
+
+# Fungsi untuk menangani kegagalan (find error)
+function finerr() {
+    local LOG_FILE="build.log"
+    local LOG_URL="https://api.cirrus-ci.com/v1/task/$CIRRUS_TASK_ID/logs/Build_kernel.log"
+    
+    echo "Pembangunan GAGAL. Mengambil log..." >&2
+    
+    # Ambil log dan pastikan berhasil
+    if ! wget -q "$LOG_URL" -O "$LOG_FILE"; then
+        echo "Gagal mengambil log dari Cirrus CI." >&2
+        tg_post_msg "<b>Pembangunan Kernel Gagal [❌]</b>%0A(Gagal mendapatkan log)."
+    else
+        echo "Mengirim log kegagalan ke Telegram..." >&2
+        
+        # Kirim dokumen log
+        curl -F document=@"$LOG_FILE" "$BOT_DOC_URL" \
+            -F chat_id="$TG_CHAT_ID" \
+            -F "disable_web_page_preview=true" \
+            -F "parse_mode=html" \
+            -F caption="==============================%0A<b>    Building Kernel CLANG Failed [❌]</b>%0A<b>        Jiancong Tenan 🤬</b>%0A=============================="
+        
+        # Kirim stiker
+        curl -s -X POST "$BOT_MSG_URL/../sendSticker" \
+            -d sticker="CAACAgQAAx0EabRMmQACAnRjEUAXBTK1Ei_zbJNPFH7WCLzSdAACpBEAAqbxcR716gIrH45xdB4E" \
+            -d chat_id="$TG_CHAT_ID"
+    fi
+    
+    exit 1
+}
 
 # Mengatur variabel lingkungan
 function setup_env() {
@@ -52,46 +93,10 @@ function setup_env() {
 
     # Menyimpan waktu mulai
     export START=$(date +"%s")
-}
-
-# Fungsi untuk mengirim pesan ke Telegram
-tg_post_msg() {
-    local message="$1"
-    curl -s -X POST "$BOT_MSG_URL" \
-        -d chat_id="$TG_CHAT_ID" \
-        -d "disable_web_page_preview=true" \
-        -d "parse_mode=html" \
-        -d text="$message"
-}
-
-# Fungsi untuk menangani kegagalan (find error)
-function finerr() {
-    local LOG_FILE="build.log"
-    local LOG_URL="https://api.cirrus-ci.com/v1/task/$CIRRUS_TASK_ID/logs/Build_kernel.log"
     
-    echo "Pembangunan GAGAL. Mengambil log..." >&2
-    
-    # Ambil log dan pastikan berhasil
-    if ! wget -q "$LOG_URL" -O "$LOG_FILE"; then
-        echo "Gagal mengambil log dari Cirrus CI." >&2
-        tg_post_msg "<b>Pembangunan Kernel Gagal [❌]</b>%0A(Gagal mendapatkan log)."
-    else
-        echo "Mengirim log kegagalan ke Telegram..." >&2
-        
-        # Kirim dokumen log
-        curl -F document=@"$LOG_FILE" "$BOT_DOC_URL" \
-            -F chat_id="$TG_CHAT_ID" \
-            -F "disable_web_page_preview=true" \
-            -F "parse_mode=html" \
-            -F caption="==============================%0A<b>    Building Kernel CLANG Failed [❌]</b>%0A<b>        Jiancong Tenan 🤬</b>%0A=============================="
-        
-        # Kirim stiker
-        curl -s -X POST "$BOT_MSG_URL/../sendSticker" \
-            -d sticker="CAACAgQAAx0EabRMmQACAnRjEUAXBTK1Ei_zbJNPFH7WCLzSdAACpBEAAqbxcR716gIrH45xdB4E" \
-            -d chat_id="$TG_CHAT_ID"
-    fi
-    
-    exit 1
+    # --- Tambahan untuk SukiSU-Ultra ---
+    # Set default ke "false" jika tidak didefinisikan. Gunakan "true" untuk mengaktifkan SukiSU-Ultra.
+    export KSU_ENABLE="${KSU_ENABLE:-false}" 
 }
 
 # Menampilkan info lingkungan
@@ -113,6 +118,7 @@ function check() {
     echo "CLANG_ROOTDIR        = ${CLANG_ROOTDIR}"
     echo "KERNEL_ROOTDIR       = ${KERNEL_ROOTDIR}"
     echo "KERNEL_OUTDIR        = ${KERNEL_OUTDIR}"
+    echo "KSU_ENABLE           = ${KSU_ENABLE}"
     echo "================================================"
 }
 
@@ -122,15 +128,31 @@ function compile() {
 
     tg_post_msg "<b>Buiild Kernel started..</b>%0A<b>Defconfig:</b> <code>$DEVICE_DEFCONFIG</code>%0A<b>Toolchain:</b> <code>$KBUILD_COMPILER_STRING</code>"
     
-    # Konfigurasi Defconfig
+    # --- START Blok Conditional KSU_ENABLE (SukiSU-Ultra) ---
+    if [[ "$KSU_ENABLE" == "true" ]]; then
+        echo "================================================"
+        echo "           Menambahkan fitur SukiSU-Ultra        "
+        echo "================================================"
+        
+        # MENGGUNANAKAN METODE INTEGRASI RESMI SukiSU-Ultra (curl | bash)
+        # Argumen 'main' mengacu pada branch SukiSU yang akan diintegrasikan.
+        # Ganti 'main' dengan 'susfs-main' jika diperlukan.
+        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main || finerr
+        
+        echo "SukiSU-Ultra berhasil diintegrasikan. Lanjutkan ke defconfig."
+
+    else
+        echo "================================================"
+        echo "   SukiSU-Ultra DINETRALKAN. Melanjutkan build bersih."
+        echo "   Untuk mengaktifkan, set KSU_ENABLE=true."
+        echo "================================================"
+    fi
+    # --- END Blok Conditional KSU_ENABLE ---
+    
+    # Konfigurasi Defconfig (Akan dijalankan setelah patch SukiSU, untuk menggabungkan perubahan config)
     make -j$(nproc) O="$KERNEL_OUTDIR" ARCH=arm64 "$DEVICE_DEFCONFIG" || finerr
     
     # Kompilasi
-    # Menggunakan daftar variabel CC/AR/AS/dst. yang disingkat untuk keterbacaan
-    # CROSS_COMPILE perlu diatur ke path tanpa akhiran toolchain (misalnya aarch64-linux-gnu-)
-    # Di script ini, semua tool di-override secara eksplisit, jadi CROSS_COMPILE tidak terlalu krusial
-    # namun tetap disiapkan untuk potensi kebutuhan Makefiles
-    
     local BIN_DIR="$CLANG_ROOTDIR/bin"
     
     make -j$(nproc) ARCH=arm64 O="$KERNEL_OUTDIR" \
@@ -197,6 +219,14 @@ function push() {
     local MINUTES=$(("$DIFF" / 60))
     local SECONDS=$(("$DIFF" % 60))
     
+    # Tambahkan status KSU ke caption
+    local KSU_STATUS=""
+    if [[ "$KSU_ENABLE" == "true" ]]; then
+        KSU_STATUS="SukiSU-Ultra: ✅ Enabled"
+    else
+        KSU_STATUS="SukiSU-Ultra: 🚫 Disabled (Clean)"
+    fi
+    
     # Kirim dokumen ZIP
     curl -F document=@"$ZIP_NAME" "$BOT_DOC_URL" \
         -F chat_id="$TG_CHAT_ID" \
@@ -208,6 +238,7 @@ function push() {
 <b>📦 Kernel:</b> $KERNEL_NAME
 <b>📱 Device:</b> $DEVICE_CODENAME
 <b>👤 Owner:</b> $CIRRUS_REPO_OWNER
+<b>🛠️ Status:</b> $KSU_STATUS
 <b>🏚️ Linux version:</b> $KERNEL_VERSION
 <b>🌿 Branch:</b> $BRANCH
 <b>🎁 Top commit:</b> $LATEST_COMMIT
@@ -228,7 +259,5 @@ function push() {
 setup_env
 check
 compile
-get_info # ganti 'info' menjadi 'get_info' agar tidak bentrok dengan perintah shell bawaan
+get_info 
 push
-
-# Akhir script
