@@ -185,11 +185,8 @@ function compile() {
             fi
         fi
         
-        elif [ -f nongki.txt ]; then
-            echo "Kernel Non-GKI terdeteksi. Harap pastikan CONFIG_KPROBES=y sudah diaktifkan, atau patching manual diperlukan."
-        fi
-        
-        echo "Integrasi KernelSU/SukiSU Selesai. Lanjutkan ke defconfig."
+    elif [ -f nongki.txt ]; then
+        echo "Kernel Non-GKI terdeteksi. Harap pastikan CONFIG_KPROBES=y sudah diaktifkan, atau patching manual diperlukan."
 
     else
         echo "================================================"
@@ -199,6 +196,8 @@ function compile() {
     fi
     # --- END Blok Conditional KSU Integration ---
     
+    echo "Integrasi KernelSU/SukiSU Selesai. Lanjutkan ke defconfig."
+
     # Konfigurasi Defconfig
     make -j$(nproc) O="$KERNEL_OUTDIR" ARCH="$ARCH" "$DEVICE_DEFCONFIG" || finerr
     
