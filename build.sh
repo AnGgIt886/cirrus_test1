@@ -137,7 +137,7 @@ function compile() {
         # MENGGUNANAKAN METODE INTEGRASI RESMI SukiSU-Ultra (curl | bash)
         # Argumen 'main' mengacu pada branch SukiSU yang akan diintegrasikan.
         # Ganti 'main' dengan 'susfs-main' jika diperlukan.
-        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main || finerr
+        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s nongki || finerr
         
         echo "SukiSU-Ultra berhasil diintegrasikan. Lanjutkan ke defconfig."
 
