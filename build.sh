@@ -2,7 +2,8 @@
 #
 # Script Pembangunan Kernel
 # Diadaptasi dari build.sh yang disediakan.
-# Menambahkan fitur SukiSU-Ultra dengan flag KSU_ENABLE
+#
+# Menambahkan fitur SukiSU-Ultra dengan flag KSU_ENABLE, SHA256, dan Clean-up otomatis.
 #
 
 # Keluar segera jika ada perintah yang gagal
@@ -26,14 +27,12 @@ function finerr() {
     local LOG_FILE="build.log"
     local LOG_URL="https://api.cirrus-ci.com/v1/task/$CIRRUS_TASK_ID/logs/Build_kernel.log"
     
-    echo "Pembangunan GAGAL. Mengambil log..." >&2
+    echo "Pembangunan GAGAL. Mencoba mengambil log dari $LOG_URL..." >&2
     
-    # Ambil log dan pastikan berhasil
-    if ! wget -q "$LOG_URL" -O "$LOG_FILE"; then
-        echo "Gagal mengambil log dari Cirrus CI." >&2
-        tg_post_msg "<b>Pembangunan Kernel Gagal [❌]</b>%0A(Gagal mendapatkan log)."
-    else
-        echo "Mengirim log kegagalan ke Telegram..." >&2
+    # Ambil log
+    if wget -q "$LOG_URL" -O "$LOG_FILE"; then
+        # KASUS BERHASIL: Log berhasil diambil dan akan dikirim
+        echo "Log berhasil diambil. Mengirim log kegagalan ke Telegram..." >&2
         
         # Kirim dokumen log
         curl -F document=@"$LOG_FILE" "$BOT_DOC_URL" \
@@ -42,12 +41,18 @@ function finerr() {
             -F "parse_mode=html" \
             -F caption="==============================%0A<b>    Building Kernel CLANG Failed [❌]</b>%0A<b>        Jiancong Tenan 🤬</b>%0A=============================="
         
-        # Kirim stiker
-        curl -s -X POST "$BOT_MSG_URL/../sendSticker" \
-            -d sticker="CAACAgQAAx0EabRMmQACAnRjEUAXBTK1Ei_zbJNPFH7WCLzSdAACpBEAAqbxcR716gIrH45xdB4E" \
-            -d chat_id="$TG_CHAT_ID"
+    else
+        # KASUS GAGAL: Gagal mengambil log (misal, URL tidak valid/timeout)
+        echo "Gagal mengambil log dari Cirrus CI. Mengirim pesan error tanpa file log." >&2
+        tg_post_msg "<b>Pembangunan Kernel Gagal [❌]</b>%0A<b>Kesalahan:</b> Gagal mendapatkan log dari Cirrus CI. Silakan cek Cirrus secara manual: <a href=\"https://cirrus-ci.com/task/$CIRRUS_TASK_ID\">Task ID $CIRRUS_TASK_ID</a>"
     fi
     
+    # Kirim stiker terlepas dari berhasil atau tidaknya pengiriman log (optional)
+    curl -s -X POST "$BOT_MSG_URL/../sendSticker" \
+        -d sticker="CAACAgQAAx0EabRMmQACAnRjEUAXBTK1Ei_zbJNPFH7WCLzSdAACpBEAAqbxcR716gIrH45xdB4E" \
+        -d chat_id="$TG_CHAT_ID"
+
+    # Keluar dengan kode error 1
     exit 1
 }
 
@@ -86,7 +91,7 @@ function setup_env() {
     export KBUILD_COMPILER_STRING="$CLANG_VER with $LLD_VER"
 
     # Variabel lain
-    export IMAGE="$KERNEL_OUTDIR/arch/arm64/boot/Image.gz"
+    export IMAGE="$KERNEL_OUTDIR/arch/arm64/boot/Image.gz-dtb" 
     export DATE=$(date +"%Y%m%d-%H%M%S") # Format tanggal yang lebih konsisten
     export BOT_MSG_URL="https://api.telegram.org/bot$TG_TOKEN/sendMessage"
     export BOT_DOC_URL="https://api.telegram.org/bot$TG_TOKEN/sendDocument"
@@ -94,8 +99,7 @@ function setup_env() {
     # Menyimpan waktu mulai
     export START=$(date +"%s")
     
-    # --- Tambahan untuk SukiSU-Ultra ---
-    # Set default ke "false" jika tidak didefinisikan. Gunakan "true" untuk mengaktifkan SukiSU-Ultra.
+    # --- Tambahan: Flag KSU_ENABLE ---
     export KSU_ENABLE="${KSU_ENABLE:-false}" 
 }
 
@@ -118,7 +122,7 @@ function check() {
     echo "CLANG_ROOTDIR        = ${CLANG_ROOTDIR}"
     echo "KERNEL_ROOTDIR       = ${KERNEL_ROOTDIR}"
     echo "KERNEL_OUTDIR        = ${KERNEL_OUTDIR}"
-    echo "KSU_ENABLE           = ${KSU_ENABLE}"
+    echo "KSU_ENABLE           = ${KSU_ENABLE}" 
     echo "================================================"
 }
 
@@ -128,16 +132,17 @@ function compile() {
 
     tg_post_msg "<b>Buiild Kernel started..</b>%0A<b>Defconfig:</b> <code>$DEVICE_DEFCONFIG</code>%0A<b>Toolchain:</b> <code>$KBUILD_COMPILER_STRING</code>"
     
+    # --- Pembersihan Otomatis ---
+    rm -rf "$KERNEL_OUTDIR"
+    mkdir -p "$KERNEL_OUTDIR"
+    
     # --- START Blok Conditional KSU_ENABLE (SukiSU-Ultra) ---
     if [[ "$KSU_ENABLE" == "true" ]]; then
         echo "================================================"
         echo "           Menambahkan fitur SukiSU-Ultra        "
         echo "================================================"
         
-        # MENGGUNANAKAN METODE INTEGRASI RESMI SukiSU-Ultra (curl | bash)
-        # Argumen 'main' mengacu pada branch SukiSU yang akan diintegrasikan.
-        # Ganti 'main' dengan 'susfs-main' jika diperlukan.
-        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s nongki || finerr
+        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main || finerr
         
         echo "SukiSU-Ultra berhasil diintegrasikan. Lanjutkan ke defconfig."
 
@@ -149,7 +154,7 @@ function compile() {
     fi
     # --- END Blok Conditional KSU_ENABLE ---
     
-    # Konfigurasi Defconfig (Akan dijalankan setelah patch SukiSU, untuk menggabungkan perubahan config)
+    # Konfigurasi Defconfig
     make -j$(nproc) O="$KERNEL_OUTDIR" ARCH=arm64 "$DEVICE_DEFCONFIG" || finerr
     
     # Kompilasi
@@ -170,37 +175,34 @@ function compile() {
         HOSTCXX="$BIN_DIR/clang++" \
         HOSTLD="$BIN_DIR/ld.lld" \
         CROSS_COMPILE="$BIN_DIR/aarch64-linux-gnu-" \
-        CROSS_COMPILE_ARM32="$BIN_DIR/arm-linux-gnueabi-" || finerr
+        CROSS_COMPILE_ARM32="$BIN_DIR/arm-linux-gnueabi-" \
+        Image.gz-dtb || finerr 
         
-    # Periksa output image
     if ! [ -a "$IMAGE" ]; then
-	    echo "Error: Image.gz tidak ditemukan setelah kompilasi." >&2
+	    echo "Error: Image.gz-dtb tidak ditemukan setelah kompilasi." >&2
 	    finerr
     fi
     
     # Kloning AnyKernel dan menyalin Image
     ANYKERNEL_DIR="$CIRRUS_WORKING_DIR/AnyKernel"
-    rm -rf "$ANYKERNEL_DIR" # Hapus jika sudah ada untuk memastikan klon baru
+    rm -rf "$ANYKERNEL_DIR" 
 	git clone --depth=1 "$ANYKERNEL" "$ANYKERNEL_DIR" || finerr
-	cp "$IMAGE" "$ANYKERNEL_DIR" || finerr
+	cp "$IMAGE" "$ANYKERNEL_DIR/Image" || finerr
 }
 
 # Mendapatkan informasi commit dan kernel
 function get_info() {
     cd "$KERNEL_ROOTDIR"
     
-    # Ambil info dari out dir setelah kompilasi
     export KERNEL_VERSION=$(grep 'Linux/arm64' "$KERNEL_OUTDIR/.config" | cut -d " " -f3 || echo "N/A")
     export UTS_VERSION=$(grep 'UTS_VERSION' "$KERNEL_OUTDIR/include/generated/compile.h" | cut -d '"' -f2 || echo "N/A")
-    # TOOLCHAIN_VERSION sudah di-export di setup_env, tapi ini adalah versi dari compile.h
     export TOOLCHAIN_FROM_HEADER=$(grep 'LINUX_COMPILER' "$KERNEL_OUTDIR/include/generated/compile.h" | cut -d '"' -f2 || echo "N/A")
     
-    # Ambil info dari git
     export LATEST_COMMIT="$(git log --pretty=format:'%s' -1 || echo "N/A")"
     export COMMIT_BY="$(git log --pretty=format:'by %an' -1 || echo "N/A")"
     export BRANCH="$(git rev-parse --abbrev-ref HEAD || echo "N/A")"
-    export KERNEL_SOURCE="${CIRRUS_REPO_OWNER}/${CIRRUS_REPO_NAME}" # Menggunakan variabel Cirrus CI
-    export KERNEL_BRANCH="$BRANCH" # Menyamakan dengan variabel yang sudah ada
+    export KERNEL_SOURCE="${CIRRUS_REPO_OWNER}/${CIRRUS_REPO_NAME}" 
+    export KERNEL_BRANCH="$BRANCH" 
 }
 
 # Push kernel ke Telegram
@@ -213,13 +215,13 @@ function push() {
     
     local ZIP_SHA1=$(sha1sum "$ZIP_NAME" | cut -d' ' -f1 || echo "N/A")
     local ZIP_MD5=$(md5sum "$ZIP_NAME" | cut -d' ' -f1 || echo "N/A")
+    local ZIP_SHA256=$(sha256sum "$ZIP_NAME" | cut -d' ' -f1 || echo "N/A") 
 
     local END=$(date +"%s")
     local DIFF=$(("$END" - "$START"))
     local MINUTES=$(("$DIFF" / 60))
     local SECONDS=$(("$DIFF" % 60))
     
-    # Tambahkan status KSU ke caption
     local KSU_STATUS=""
     if [[ "$KSU_ENABLE" == "true" ]]; then
         KSU_STATUS="SukiSU-Ultra: ✅ Enabled"
@@ -244,6 +246,7 @@ function push() {
 <b>🎁 Top commit:</b> $LATEST_COMMIT
 <b>📚 SHA1:</b> <code>$ZIP_SHA1</code>
 <b>📚 MD5:</b> <code>$ZIP_MD5</code>
+<b>📚 SHA256:</b> <code>$ZIP_SHA256</code>
 <b>👩‍💻 Commit author:</b> $COMMIT_BY
 <b>🐧 UTS version:</b> $UTS_VERSION
 <b>💡 Compiler:</b> $KBUILD_COMPILER_STRING
