@@ -3,7 +3,7 @@
 # Script Pembangunan Kernel
 # Diadaptasi dari build.sh yang disediakan.
 #
-# Menambahkan fitur KernelSU yang fleksibel dengan KSU_ENABLE, KSU_VERSION, dan LKM.
+# Menggunakan Image.gz sebagai output akhir dan linker ld.lld (default).
 #
 
 # Keluar segera jika ada perintah yang gagal
@@ -68,11 +68,18 @@ function setup_env() {
     : "${ANYKERNEL:?Error: ANYKERNEL not set}"
     : "${CIRRUS_TASK_ID:?Error: CIRRUS_TASK_ID not set}"
 
+    # --- Core Build Variables ---
+    export ARCH="${ARCH:-arm64}" 
+    export CONFIG="${CONFIG:-vendor/bengal-perf_defconfig}" 
+    export CLANG_DIR="${CLANG_DIR:-$CIRRUS_WORKING_DIR/greenforce-clang}" 
+    
+    # LD_IMPL DIHAPUS, akan menggunakan ld.lld hardcoded di compile()
+    
     export KERNEL_NAME="mrt-Kernel"
     local KERNEL_ROOTDIR_BASE="$CIRRUS_WORKING_DIR/$DEVICE_CODENAME"
     export KERNEL_ROOTDIR="$KERNEL_ROOTDIR_BASE"
-    export DEVICE_DEFCONFIG="vendor/bengal-perf_defconfig"
-    export CLANG_ROOTDIR="$CIRRUS_WORKING_DIR/greenforce-clang"
+    export DEVICE_DEFCONFIG="$CONFIG" 
+    export CLANG_ROOTDIR="$CLANG_DIR" 
     export KERNEL_OUTDIR="$KERNEL_ROOTDIR/out"
 
     # Verifikasi keberadaan dan versi toolchain
@@ -83,7 +90,7 @@ function setup_env() {
 
     # Mendapatkan versi toolchain
     CLANG_VER="$("$CLANG_ROOTDIR"/bin/clang --version | head -n 1 | perl -pe 's/\(http.*?\)//gs' | sed -e 's/  */ /g' -e 's/[[:space:]]*$//')"
-    LLD_VER="$("$CLANG_ROOTDIR"/bin/ld.lld --version | head -n 1)"
+    LLD_VER="$("$CLANG_ROOTDIR"/bin/ld.lld --version | head -n 1)" # Menggunakan ld.lld default
 
     # Export variabel KBUILD
     export KBUILD_BUILD_USER="$BUILD_USER"
@@ -91,22 +98,21 @@ function setup_env() {
     export KBUILD_COMPILER_STRING="$CLANG_VER with $LLD_VER"
 
     # Variabel lain
-    export IMAGE="$KERNEL_OUTDIR/arch/arm64/boot/Image.gz" 
-    export DATE=$(date +"%Y%m%d-%H%M%S") # Format tanggal yang lebih konsisten
+    # Diubah: Kembali ke Image.gz
+    export IMAGE="$KERNEL_OUTDIR/arch/$ARCH/boot/Image.gz" 
+    export DATE=$(date +"%Y%m%d-%H%M%S") 
     export BOT_MSG_URL="https://api.telegram.org/bot$TG_TOKEN/sendMessage"
     export BOT_DOC_URL="https://api.telegram.org/bot$TG_TOKEN/sendDocument"
 
     # Menyimpan waktu mulai
     export START=$(date +"%s")
     
-    # --- Tambahan: Flag KSU dan Variabel Baru ---
-    export KSU_ENABLE="${KSU_ENABLE:-false}"          # Menggantikan ${{ inputs.ksu }}
-    export KSU_VERSION="${KSU_VERSION:-main}"        # Menggantikan ${{ inputs.ksu-version }}
-    export KSU_LKM_ENABLE="${KSU_LKM_ENABLE:-false}" # Menggantikan ${{ inputs.ksu-lkm }}
-    export KSU_OTHER_ENABLE="${KSU_OTHER_ENABLE:-false}" # Menggantikan ${{ inputs.ksu-other }}
-    # KSU_OTHER_URL hanya digunakan jika KSU_OTHER_ENABLE=true
+    # --- Flag KSU dan Variabel ---
+    export KSU_ENABLE="${KSU_ENABLE:-false}"          
+    export KSU_VERSION="${KSU_VERSION:-main}"        
+    export KSU_LKM_ENABLE="${KSU_LKM_ENABLE:-false}" 
+    export KSU_OTHER_ENABLE="${KSU_OTHER_ENABLE:-false}" 
     export KSU_OTHER_URL="${KSU_OTHER_URL:-https://raw.githubusercontent.com/tiann/KernelSU}" 
-    # KSU_SKIP_PATCH hanya untuk non-GKI, diabaikan di sini untuk menyederhanakan
 }
 
 # Menampilkan info lingkungan
@@ -122,11 +128,11 @@ function check() {
     echo " /_/  /_/|_|\____/\___/___/\___/ /_/          "
     echo "================================================"
     echo "BUILDER NAME         = ${KBUILD_BUILD_USER}"
-    echo "BUILDER HOSTNAME     = ${KBUILD_BUILD_HOST}"
+    echo "ARCH                 = ${ARCH}" 
+    echo "LINKER               = ld.lld (Default)" # Tampilkan nilai default
     echo "DEVICE_DEFCONFIG     = ${DEVICE_DEFCONFIG}"
     echo "TOOLCHAIN_VERSION    = ${KBUILD_COMPILER_STRING}"
     echo "KERNEL_ROOTDIR       = ${KERNEL_ROOTDIR}"
-    # --- Tampilkan status KSU ---
     echo "KSU_ENABLE           = ${KSU_ENABLE}" 
     echo "KSU_VERSION          = ${KSU_VERSION}"
     echo "KSU_LKM_ENABLE       = ${KSU_LKM_ENABLE}"
@@ -137,53 +143,41 @@ function check() {
 function compile() {
     cd "$KERNEL_ROOTDIR"
 
-    tg_post_msg "<b>Buiild Kernel started..</b>%0A<b>Defconfig:</b> <code>$DEVICE_DEFCONFIG</code>%0A<b>Toolchain:</b> <code>$KBUILD_COMPILER_STRING</code>"
+    tg_post_msg "<b>Buiild Kernel started..</b>%0A<b>Defconfig:</b> <code>$DEVICE_DEFCONFIG</code>%0A<b>Toolchain:</b> <code>$KBUILD_COMPILER_STRING</code>%0A<b>Arsitektur:</b> <code>$ARCH</code>"
     
     # --- Pembersihan Otomatis ---
     rm -rf "$KERNEL_OUTDIR"
     mkdir -p "$KERNEL_OUTDIR"
     
-    # --- START Blok Conditional KSU Integration (Diadaptasi dari logika KernelSU Action) ---
+    # --- START Blok Conditional KSU Integration ---
     if [[ "$KSU_ENABLE" == "true" ]]; then
         echo "================================================"
         echo "           Memeriksa dan Mengintegrasikan Root Kernel"
         echo "================================================"
         
-        # 1. Cek apakah KernelSU sudah terintegrasi (dengan KernelSU/kernel/Kconfig)
         if [ -f $KERNEL_ROOTDIR/KernelSU/kernel/Kconfig ]; then
             echo "KernelSU/SukiSU sudah terintegrasi, dilewati."
         else
-            # 2. Integrasi KernelSU
             if [[ "$KSU_OTHER_ENABLE" == "true" ]]; then
-                # Menggunakan URL/Repo Kustom
                 echo "Menggunakan URL KSU/SukiSU Kustom: $KSU_OTHER_URL, Versi: $KSU_VERSION"
-                # URL kustom diasumsikan sudah lengkap (misalnya https://raw.githubusercontent.com/User/Repo)
                 curl -SsL "$KSU_OTHER_URL/$KSU_VERSION/kernel/setup.sh" | bash -s "$KSU_VERSION" || finerr
             else
-                # Menggunakan Repo tiann/KernelSU Resmi
                 KVER="$KSU_VERSION"
                 
-                # 2a. Cek kernel non-GKI (dengan file nongki.txt sebagai penanda)
                 if [ -f nongki.txt ]; then
                     printf "Peringatan: Kernel dideteksi non-GKI. Versi KernelSU akan dipaksa ke v0.9.5 (jika KVER lebih baru).\n"
-                    # Logika frstprjkt: memaksa v0.9.5 untuk non-GKI jika versi yang diminta lebih baru
                     if [[ "$KVER" != "v0.9.5" ]]; then
                          KVER="v0.9.5"
                     fi
                 fi
                 
                 echo "Mengintegrasikan KernelSU versi: $KVER dari tiann/KernelSU."
-                # Menggunakan tiann/KernelSU resmi
                 curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s "$KVER" || finerr
             fi
         fi
         
-        # 3. Logika KSU LKM (Loadable Kernel Module)
         if [[ "$KSU_LKM_ENABLE" == "true" ]]; then
             echo "Mengaktifkan KernelSU sebagai LKM (Loadable Kernel Module)."
-            # LKM mode: Mengubah KSU menjadi module (m) di source Kconfig
-            # Asumsi KSU Kconfig sudah ada setelah setup.sh
-            # Perhatikan: Ini mungkin perlu disesuaikan tergantung lokasi Kconfig KSU Anda.
             if [ -f $KERNEL_ROOTDIR/drivers/kernelsu/Kconfig ]; then
                 sed -i '/config KSU/,/help/{s/default y/default m/}' $KERNEL_ROOTDIR/drivers/kernelsu/Kconfig || echo "Peringatan: Gagal mengubah KSU menjadi LKM di Kconfig."
             else
@@ -191,12 +185,8 @@ function compile() {
             fi
         fi
         
-        # 4. Logika Patching Non-GKI (jika bukan LKM)
         elif [ -f nongki.txt ]; then
             echo "Kernel Non-GKI terdeteksi. Harap pastikan CONFIG_KPROBES=y sudah diaktifkan, atau patching manual diperlukan."
-            # Patch CoCCI untuk non-GKI sering memerlukan skrip eksternal yang spesifik.
-            # Mengingat tidak ada skrip yang diberikan (seperti ${{ github.action_path }}/kernelsu/apply_cocci.sh), 
-            # pengguna harus memastikan KPROBES di-enable di defconfig.
         fi
         
         echo "Integrasi KernelSU/SukiSU Selesai. Lanjutkan ke defconfig."
@@ -210,12 +200,28 @@ function compile() {
     # --- END Blok Conditional KSU Integration ---
     
     # Konfigurasi Defconfig
-    make -j$(nproc) O="$KERNEL_OUTDIR" ARCH=arm64 "$DEVICE_DEFCONFIG" || finerr
+    make -j$(nproc) O="$KERNEL_OUTDIR" ARCH="$ARCH" "$DEVICE_DEFCONFIG" || finerr
     
     # Kompilasi
     local BIN_DIR="$CLANG_ROOTDIR/bin"
     
-    make -j$(nproc) ARCH=arm64 O="$KERNEL_OUTDIR" \
+    # Tentukan prefix cross-compile berdasarkan ARCH
+    local CC_PREFIX
+    local CC32_PREFIX
+
+    if [[ "$ARCH" == "arm64" ]]; then
+        CC_PREFIX="aarch64-linux-gnu-"
+        CC32_PREFIX="arm-linux-gnueabi-"
+    elif [[ "$ARCH" == "arm" ]]; then
+        CC_PREFIX="arm-linux-gnueabi-"
+        CC32_PREFIX="arm-linux-gnueabi-"
+    else
+        CC_PREFIX="aarch64-linux-gnu-"
+        CC32_PREFIX="arm-linux-gnueabi-"
+    fi
+
+    # Target make DIUBAH kembali ke Image.gz (menggunakan variabel IMAGE)
+    make -j$(nproc) ARCH="$ARCH" O="$KERNEL_OUTDIR" \
         CC="$BIN_DIR/clang" \
         AR="$BIN_DIR/llvm-ar" \
         AS="$BIN_DIR/llvm-as" \
@@ -229,9 +235,9 @@ function compile() {
         HOSTCC="$BIN_DIR/clang" \
         HOSTCXX="$BIN_DIR/clang++" \
         HOSTLD="$BIN_DIR/ld.lld" \
-        CROSS_COMPILE="$BIN_DIR/aarch64-linux-gnu-" \
-        CROSS_COMPILE_ARM32="$BIN_DIR/arm-linux-gnueabi-" \
-        Image.gz || finerr 
+        CROSS_COMPILE="$BIN_DIR/$CC_PREFIX" \
+        CROSS_COMPILE_ARM32="$BIN_DIR/$CC32_PREFIX" \
+        Image.gz || finerr # Target kompilasi Image.gz
         
     if ! [ -a "$IMAGE" ]; then
 	    echo "Error: Image.gz tidak ditemukan setelah kompilasi." >&2
@@ -242,6 +248,7 @@ function compile() {
     ANYKERNEL_DIR="$CIRRUS_WORKING_DIR/AnyKernel"
     rm -rf "$ANYKERNEL_DIR" 
 	git clone --depth=1 "$ANYKERNEL" "$ANYKERNEL_DIR" || finerr
+	# IMAGE yang disalin adalah Image.gz, disalin sebagai Image untuk AnyKernel
 	cp "$IMAGE" "$ANYKERNEL_DIR/Image" || finerr
 }
 
@@ -309,6 +316,7 @@ function push() {
 <b>👩‍💻 Commit author:</b> $COMMIT_BY
 <b>🐧 UTS version:</b> $UTS_VERSION
 <b>💡 Compiler:</b> $KBUILD_COMPILER_STRING
+<b>💡 ARCH:</b> $ARCH
 ==========================
 <b>⏱️ Compile took:</b> $MINUTES minute(s) and $SECONDS second(s).
 <b>⚙️ Changes:</b> <a href=\"https://github.com/$KERNEL_SOURCE/commits/$KERNEL_BRANCH\">Here</a>"
