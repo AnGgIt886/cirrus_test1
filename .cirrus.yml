@@ -27,6 +27,7 @@ env:
   KSU_ENABLE: true
   KSU_VERSION: nongki
   KSU_LKM_ENABLE: true
+  KSU_OTHER_ENABLE: true
   KSU_OTHER_URL: https://github.com/SukiSU-Ultra/SukiSU-Ultra
   
   # Telegram
