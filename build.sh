@@ -58,6 +58,16 @@ function finerr() {
 
 # Mengatur variabel lingkungan
 function setup_env() {
+    # Pastikan semua variabel Cirrus CI yang diperlukan ada, ini hanya contoh.
+    : "${CIRRUS_WORKING_DIR:?Error: CIRRUS_WORKING_DIR not set}"
+    : "${DEVICE_CODENAME:?Error: DEVICE_CODENAME not set}"
+    : "${TG_TOKEN:?Error: TG_TOKEN not set}"
+    : "${TG_CHAT_ID:?Error: TG_CHAT_ID not set}"
+    : "${BUILD_USER:?Error: BUILD_USER not set}"
+    : "${BUILD_HOST:?Error: BUILD_HOST not set}"
+    : "${ANYKERNEL:?Error: ANYKERNEL not set}"
+    : "${CIRRUS_TASK_ID:?Error: CIRRUS_TASK_ID not set}"
+
     # --- Core Build Variables ---
     export ARCH="${ARCH:-arm64}" 
     export CONFIG="${CONFIG:-vendor/bengal-perf_defconfig}" 
@@ -129,8 +139,7 @@ function check() {
     echo "================================================"
 }
 
-# Proses kompilasi kernel
-# Proses kompilasi kernel (VERSI MODIFIKASI)
+# Proses kompilasi kernel (VERSI MODIFIKASI UNTUK MENGHINDARI RESTART CONFIG)
 function compile() {
     cd "$KERNEL_ROOTDIR"
 
@@ -149,9 +158,6 @@ function compile() {
         echo "================================================"
         echo "           Memeriksa dan Mengintegrasikan Root Kernel"
         echo "================================================"
-        
-        # ... (Semua kode integrasi KSU yang ada di sini) ...
-        # (Kode ini memodifikasi file Kconfig di source tree)
         
         if [ -f $KERNEL_ROOTDIR/KernelSU/kernel/Kconfig ]; then
             echo "KernelSU/SukiSU sudah terintegrasi, dilewati."
@@ -185,21 +191,16 @@ function compile() {
         
         # 2. SINKRONISASI KONFIGURASI SETELAH MODIFIKASI KSU
         echo "Integrasi KernelSU/SukiSU Selesai. Mensinkronkan konfigurasi (olddefconfig)..."
-        # Perintah ini akan mengadopsi perubahan Kconfig (dari KSU) ke .config
-        # di outdir tanpa meminta input pengguna (yang memicu restart config)
+        # Ini penting untuk mengadopsi perubahan Kconfig yang dilakukan oleh KSU ke .config
+        # dan mencegah 'Restart config' saat kompilasi penuh.
         make -j$(nproc) O="$KERNEL_OUTDIR" ARCH="$ARCH" olddefconfig || finerr 
         
     elif [ -f nongki.txt ]; then
         echo "Kernel Non-GKI terdeteksi. Harap pastikan CONFIG_KPROBES=y sudah diaktifkan, atau patching manual diperlukan."
-        # JIKA TIDAK ADA KSU, KITA MASIH PERLU MEMBUAT DEFCONFIG.
-        # Catatan: make defconfig sudah dipindahkan ke atas (Langkah 1).
-        
     else
         echo "================================================"
         echo "   ROOT KERNEL DINETRALKAN. Melanjutkan build bersih."
         echo "   Untuk mengaktifkan, set KSU_ENABLE=true."
-        # JIKA TIDAK ADA KSU, KITA MASIH PERLU MEMBUAT DEFCONFIG.
-        # Catatan: make defconfig sudah dipindahkan ke atas (Langkah 1).
         echo "================================================"
     fi
     # --- END Blok Conditional KSU Integration ---
