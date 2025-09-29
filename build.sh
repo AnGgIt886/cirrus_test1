@@ -3,7 +3,7 @@
 # Script Pembangunan Kernel
 # Diadaptasi dari build.sh yang disediakan.
 #
-# Menambahkan fitur SukiSU-Ultra dengan flag KSU_ENABLE, SHA256, dan Clean-up otomatis.
+# Menambahkan fitur KernelSU yang fleksibel dengan KSU_ENABLE, KSU_VERSION, dan LKM.
 #
 
 # Keluar segera jika ada perintah yang gagal
@@ -91,7 +91,7 @@ function setup_env() {
     export KBUILD_COMPILER_STRING="$CLANG_VER with $LLD_VER"
 
     # Variabel lain
-    export IMAGE="$KERNEL_OUTDIR/arch/arm64/boot/Image.gz-dtb" 
+    export IMAGE="$KERNEL_OUTDIR/arch/arm64/boot/Image.gz" 
     export DATE=$(date +"%Y%m%d-%H%M%S") # Format tanggal yang lebih konsisten
     export BOT_MSG_URL="https://api.telegram.org/bot$TG_TOKEN/sendMessage"
     export BOT_DOC_URL="https://api.telegram.org/bot$TG_TOKEN/sendDocument"
@@ -99,8 +99,14 @@ function setup_env() {
     # Menyimpan waktu mulai
     export START=$(date +"%s")
     
-    # --- Tambahan: Flag KSU_ENABLE ---
-    export KSU_ENABLE="${KSU_ENABLE:-false}" 
+    # --- Tambahan: Flag KSU dan Variabel Baru ---
+    export KSU_ENABLE="${KSU_ENABLE:-false}"          # Menggantikan ${{ inputs.ksu }}
+    export KSU_VERSION="${KSU_VERSION:-main}"        # Menggantikan ${{ inputs.ksu-version }}
+    export KSU_LKM_ENABLE="${KSU_LKM_ENABLE:-false}" # Menggantikan ${{ inputs.ksu-lkm }}
+    export KSU_OTHER_ENABLE="${KSU_OTHER_ENABLE:-false}" # Menggantikan ${{ inputs.ksu-other }}
+    # KSU_OTHER_URL hanya digunakan jika KSU_OTHER_ENABLE=true
+    export KSU_OTHER_URL="${KSU_OTHER_URL:-https://raw.githubusercontent.com/tiann/KernelSU}" 
+    # KSU_SKIP_PATCH hanya untuk non-GKI, diabaikan di sini untuk menyederhanakan
 }
 
 # Menampilkan info lingkungan
@@ -119,10 +125,11 @@ function check() {
     echo "BUILDER HOSTNAME     = ${KBUILD_BUILD_HOST}"
     echo "DEVICE_DEFCONFIG     = ${DEVICE_DEFCONFIG}"
     echo "TOOLCHAIN_VERSION    = ${KBUILD_COMPILER_STRING}"
-    echo "CLANG_ROOTDIR        = ${CLANG_ROOTDIR}"
     echo "KERNEL_ROOTDIR       = ${KERNEL_ROOTDIR}"
-    echo "KERNEL_OUTDIR        = ${KERNEL_OUTDIR}"
+    # --- Tampilkan status KSU ---
     echo "KSU_ENABLE           = ${KSU_ENABLE}" 
+    echo "KSU_VERSION          = ${KSU_VERSION}"
+    echo "KSU_LKM_ENABLE       = ${KSU_LKM_ENABLE}"
     echo "================================================"
 }
 
@@ -136,23 +143,71 @@ function compile() {
     rm -rf "$KERNEL_OUTDIR"
     mkdir -p "$KERNEL_OUTDIR"
     
-    # --- START Blok Conditional KSU_ENABLE (SukiSU-Ultra) ---
+    # --- START Blok Conditional KSU Integration (Diadaptasi dari logika KernelSU Action) ---
     if [[ "$KSU_ENABLE" == "true" ]]; then
         echo "================================================"
-        echo "           Menambahkan fitur SukiSU-Ultra        "
+        echo "           Memeriksa dan Mengintegrasikan Root Kernel"
         echo "================================================"
         
-        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main || finerr
+        # 1. Cek apakah KernelSU sudah terintegrasi (dengan KernelSU/kernel/Kconfig)
+        if [ -f $KERNEL_ROOTDIR/KernelSU/kernel/Kconfig ]; then
+            echo "KernelSU/SukiSU sudah terintegrasi, dilewati."
+        else
+            # 2. Integrasi KernelSU
+            if [[ "$KSU_OTHER_ENABLE" == "true" ]]; then
+                # Menggunakan URL/Repo Kustom
+                echo "Menggunakan URL KSU/SukiSU Kustom: $KSU_OTHER_URL, Versi: $KSU_VERSION"
+                # URL kustom diasumsikan sudah lengkap (misalnya https://raw.githubusercontent.com/User/Repo)
+                curl -SsL "$KSU_OTHER_URL/$KSU_VERSION/kernel/setup.sh" | bash -s "$KSU_VERSION" || finerr
+            else
+                # Menggunakan Repo tiann/KernelSU Resmi
+                KVER="$KSU_VERSION"
+                
+                # 2a. Cek kernel non-GKI (dengan file nongki.txt sebagai penanda)
+                if [ -f nongki.txt ]; then
+                    printf "Peringatan: Kernel dideteksi non-GKI. Versi KernelSU akan dipaksa ke v0.9.5 (jika KVER lebih baru).\n"
+                    # Logika frstprjkt: memaksa v0.9.5 untuk non-GKI jika versi yang diminta lebih baru
+                    if [[ "$KVER" != "v0.9.5" ]]; then
+                         KVER="v0.9.5"
+                    fi
+                fi
+                
+                echo "Mengintegrasikan KernelSU versi: $KVER dari tiann/KernelSU."
+                # Menggunakan tiann/KernelSU resmi
+                curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s "$KVER" || finerr
+            fi
+        fi
         
-        echo "SukiSU-Ultra berhasil diintegrasikan. Lanjutkan ke defconfig."
+        # 3. Logika KSU LKM (Loadable Kernel Module)
+        if [[ "$KSU_LKM_ENABLE" == "true" ]]; then
+            echo "Mengaktifkan KernelSU sebagai LKM (Loadable Kernel Module)."
+            # LKM mode: Mengubah KSU menjadi module (m) di source Kconfig
+            # Asumsi KSU Kconfig sudah ada setelah setup.sh
+            # Perhatikan: Ini mungkin perlu disesuaikan tergantung lokasi Kconfig KSU Anda.
+            if [ -f $KERNEL_ROOTDIR/drivers/kernelsu/Kconfig ]; then
+                sed -i '/config KSU/,/help/{s/default y/default m/}' $KERNEL_ROOTDIR/drivers/kernelsu/Kconfig || echo "Peringatan: Gagal mengubah KSU menjadi LKM di Kconfig."
+            else
+                echo "Peringatan: drivers/kernelsu/Kconfig tidak ditemukan, gagal mengatur KSU sebagai LKM."
+            fi
+        fi
+        
+        # 4. Logika Patching Non-GKI (jika bukan LKM)
+        elif [ -f nongki.txt ]; then
+            echo "Kernel Non-GKI terdeteksi. Harap pastikan CONFIG_KPROBES=y sudah diaktifkan, atau patching manual diperlukan."
+            # Patch CoCCI untuk non-GKI sering memerlukan skrip eksternal yang spesifik.
+            # Mengingat tidak ada skrip yang diberikan (seperti ${{ github.action_path }}/kernelsu/apply_cocci.sh), 
+            # pengguna harus memastikan KPROBES di-enable di defconfig.
+        fi
+        
+        echo "Integrasi KernelSU/SukiSU Selesai. Lanjutkan ke defconfig."
 
     else
         echo "================================================"
-        echo "   SukiSU-Ultra DINETRALKAN. Melanjutkan build bersih."
+        echo "   ROOT KERNEL DINETRALKAN. Melanjutkan build bersih."
         echo "   Untuk mengaktifkan, set KSU_ENABLE=true."
         echo "================================================"
     fi
-    # --- END Blok Conditional KSU_ENABLE ---
+    # --- END Blok Conditional KSU Integration ---
     
     # Konfigurasi Defconfig
     make -j$(nproc) O="$KERNEL_OUTDIR" ARCH=arm64 "$DEVICE_DEFCONFIG" || finerr
@@ -176,10 +231,10 @@ function compile() {
         HOSTLD="$BIN_DIR/ld.lld" \
         CROSS_COMPILE="$BIN_DIR/aarch64-linux-gnu-" \
         CROSS_COMPILE_ARM32="$BIN_DIR/arm-linux-gnueabi-" \
-        Image.gz-dtb || finerr 
+        Image.gz || finerr 
         
     if ! [ -a "$IMAGE" ]; then
-	    echo "Error: Image.gz-dtb tidak ditemukan setelah kompilasi." >&2
+	    echo "Error: Image.gz tidak ditemukan setelah kompilasi." >&2
 	    finerr
     fi
     
@@ -222,11 +277,15 @@ function push() {
     local MINUTES=$(("$DIFF" / 60))
     local SECONDS=$(("$DIFF" % 60))
     
+    # Menentukan status KSU
     local KSU_STATUS=""
     if [[ "$KSU_ENABLE" == "true" ]]; then
-        KSU_STATUS="SukiSU-Ultra: ✅ Enabled"
+        KSU_STATUS="KernelSU: ✅ Enabled (Versi: $KSU_VERSION)"
+        if [[ "$KSU_LKM_ENABLE" == "true" ]]; then
+            KSU_STATUS="$KSU_STATUS (LKM)"
+        fi
     else
-        KSU_STATUS="SukiSU-Ultra: 🚫 Disabled (Clean)"
+        KSU_STATUS="KernelSU: 🚫 Disabled (Clean)"
     fi
     
     # Kirim dokumen ZIP

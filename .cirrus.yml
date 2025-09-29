@@ -7,6 +7,9 @@ env:
   KERNEL_BRANCH: master
   ANYKERNEL: https://github.com/frstprjkt/AnyKernel3.git
   KSU_ENABLE: true
+  KSU_VERSION: nongki
+  KSU_LKM_ENABLE: true
+  KSU_OTHER_URL: https://github.com/SukiSU-Ultra/SukiSU-Ultra
   CIRRUS_CLONE_DEPTH: 1
   CIRRUS_WORKING_DIR: /tmp/cirrus-ci-build
   TG_TOKEN: ENCRYPTED[d0276edb784fa8b652def34d72880b4851940c542e7359f5f4bf2fd580c50a2703fd253d507dbae7707b26f9c97a6062]
