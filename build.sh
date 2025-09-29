@@ -58,16 +58,6 @@ function finerr() {
 
 # Mengatur variabel lingkungan
 function setup_env() {
-    # Pastikan semua variabel Cirrus CI yang diperlukan ada, ini hanya contoh.
-    : "${CIRRUS_WORKING_DIR:?Error: CIRRUS_WORKING_DIR not set}"
-    : "${DEVICE_CODENAME:?Error: DEVICE_CODENAME not set}"
-    : "${TG_TOKEN:?Error: TG_TOKEN not set}"
-    : "${TG_CHAT_ID:?Error: TG_CHAT_ID not set}"
-    : "${BUILD_USER:?Error: BUILD_USER not set}"
-    : "${BUILD_HOST:?Error: BUILD_HOST not set}"
-    : "${ANYKERNEL:?Error: ANYKERNEL not set}"
-    : "${CIRRUS_TASK_ID:?Error: CIRRUS_TASK_ID not set}"
-
     # --- Core Build Variables ---
     export ARCH="${ARCH:-arm64}" 
     export CONFIG="${CONFIG:-vendor/bengal-perf_defconfig}" 
@@ -140,6 +130,7 @@ function check() {
 }
 
 # Proses kompilasi kernel
+# Proses kompilasi kernel (VERSI MODIFIKASI)
 function compile() {
     cd "$KERNEL_ROOTDIR"
 
@@ -149,11 +140,18 @@ function compile() {
     rm -rf "$KERNEL_OUTDIR"
     mkdir -p "$KERNEL_OUTDIR"
     
+    # 1. KONFIGURASI DEFCONFIG AWAL
+    echo "Membuat defconfig awal..."
+    make -j$(nproc) O="$KERNEL_OUTDIR" ARCH="$ARCH" "$DEVICE_DEFCONFIG" || finerr
+    
     # --- START Blok Conditional KSU Integration ---
     if [[ "$KSU_ENABLE" == "true" ]]; then
         echo "================================================"
         echo "           Memeriksa dan Mengintegrasikan Root Kernel"
         echo "================================================"
+        
+        # ... (Semua kode integrasi KSU yang ada di sini) ...
+        # (Kode ini memodifikasi file Kconfig di source tree)
         
         if [ -f $KERNEL_ROOTDIR/KernelSU/kernel/Kconfig ]; then
             echo "KernelSU/SukiSU sudah terintegrasi, dilewati."
@@ -185,23 +183,30 @@ function compile() {
             fi
         fi
         
+        # 2. SINKRONISASI KONFIGURASI SETELAH MODIFIKASI KSU
+        echo "Integrasi KernelSU/SukiSU Selesai. Mensinkronkan konfigurasi (olddefconfig)..."
+        # Perintah ini akan mengadopsi perubahan Kconfig (dari KSU) ke .config
+        # di outdir tanpa meminta input pengguna (yang memicu restart config)
+        make -j$(nproc) O="$KERNEL_OUTDIR" ARCH="$ARCH" olddefconfig || finerr 
+        
     elif [ -f nongki.txt ]; then
         echo "Kernel Non-GKI terdeteksi. Harap pastikan CONFIG_KPROBES=y sudah diaktifkan, atau patching manual diperlukan."
-
+        # JIKA TIDAK ADA KSU, KITA MASIH PERLU MEMBUAT DEFCONFIG.
+        # Catatan: make defconfig sudah dipindahkan ke atas (Langkah 1).
+        
     else
         echo "================================================"
         echo "   ROOT KERNEL DINETRALKAN. Melanjutkan build bersih."
         echo "   Untuk mengaktifkan, set KSU_ENABLE=true."
+        # JIKA TIDAK ADA KSU, KITA MASIH PERLU MEMBUAT DEFCONFIG.
+        # Catatan: make defconfig sudah dipindahkan ke atas (Langkah 1).
         echo "================================================"
     fi
     # --- END Blok Conditional KSU Integration ---
     
-    echo "Integrasi KernelSU/SukiSU Selesai. Lanjutkan ke defconfig."
-
-    # Konfigurasi Defconfig
-    make -j$(nproc) O="$KERNEL_OUTDIR" ARCH="$ARCH" "$DEVICE_DEFCONFIG" || finerr
+    echo "Lanjutkan ke kompilasi."
     
-    # Kompilasi
+    # 3. Kompilasi
     local BIN_DIR="$CLANG_ROOTDIR/bin"
     
     # Tentukan prefix cross-compile berdasarkan ARCH
@@ -219,7 +224,7 @@ function compile() {
         CC32_PREFIX="arm-linux-gnueabi-"
     fi
 
-    # Target make DIUBAH kembali ke Image.gz (menggunakan variabel IMAGE)
+    # Target make Image.gz
     make -j$(nproc) ARCH="$ARCH" O="$KERNEL_OUTDIR" \
         CC="$BIN_DIR/clang" \
         AR="$BIN_DIR/llvm-ar" \
