@@ -265,7 +265,12 @@ function compile() {
     # --- Pembersihan Otomatis ---
     rm -rf "$KERNEL_OUTDIR"
     mkdir -p "$KERNEL_OUTDIR"
-
+    
+    # 1. KONFIGURASI DEFCONFIG AWAL
+    echo "Membuat defconfig awal..."
+    # make akan mencari $DEVICE_DEFCONFIG di arch/$ARCH/configs/
+    make -j$(nproc) O="$KERNEL_OUTDIR" ARCH="$ARCH" "$DEVICE_DEFCONFIG" || finerr
+    
     # --- START Blok Conditional KSU Integration ---
     if [[ "$KSU_ENABLE" == "true" ]]; then
         echo "================================================"
@@ -303,6 +308,10 @@ function compile() {
             fi
         fi
         
+        # 2. SINKRONISASI KONFIGURASI SETELAN MODIFIKASI KSU
+        echo "Integrasi KernelSU/SukiSU Selesai. Mensinkronkan konfigurasi (olddefconfig)..."
+        make -j$(nproc) O="$KERNEL_OUTDIR" ARCH="$ARCH" olddefconfig || finerr 
+        
     elif [ -f nongki.txt ]; then
         echo "Kernel Non-GKI terdeteksi. Harap pastikan CONFIG_KPROBES=y sudah diaktifkan, atau patching manual diperlukan."
     else
@@ -334,7 +343,7 @@ function compile() {
     fi
 
     # Target make Image.gz
-    make -j$(nproc) ARCH="$ARCH" "$DEVICE_DEFCONFIG" O="$KERNEL_OUTDIR" \
+    make -j$(nproc) ARCH="$ARCH" O="$KERNEL_OUTDIR" \
         LLVM="1" \
         LLVM_IAS="1" \
         CC="clang" \
@@ -346,7 +355,7 @@ function compile() {
         OBJDUMP="llvm-objdump" \
         OBJSIZE="llvm-size" \
         READELF="llvm-readelf" \
-        
+        STRIP="llvm-strip" \
         HOSTCC="clang" \
         HOSTCXX="clang++" \
         HOSTLD="ld.lld" \
