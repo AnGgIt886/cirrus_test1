@@ -56,6 +56,97 @@ function finerr() {
     exit 1
 }
 
+# Fungsi serbaguna untuk kloning Git atau mengunduh dan mengekstrak
+function clone_or_download() {
+    local url="$1"
+    local target_dir="$2"
+    local type="$3" # "source" atau "toolchain"
+    local branch="$4" # Branch yang akan dikloning (opsional)
+
+    echo "Memproses: $type dari $url ke $target_dir" >&2
+    
+    # Kloning Git
+    if [[ "$url" =~ ^(git@|http|https) ]]; then
+        echo "Mengeksekusi Git clone..." >&2
+        
+        local clone_options="--depth=1"
+        if [ -n "$branch" ]; then
+            clone_options="$clone_options --branch $branch"
+            echo "Mengkloning branch: $branch" >&2
+        fi
+        
+        # Eksekusi Git clone dengan opsi yang sesuai
+        git clone $clone_options "$url" "$target_dir" || finerr
+    
+    # Mengunduh dan mengekstrak file
+    elif [[ "$url" =~ \.(tar\.gz|tgz|zip|tar)$ ]]; then
+        local temp_file
+        temp_file=$(mktemp)
+
+        echo "Mengunduh file terkompresi..." >&2
+        curl -Ls -o "$temp_file" "$url" || finerr
+
+        # Membuat direktori target jika belum ada
+        mkdir -p "$target_dir"
+        
+        echo "Mengekstrak file..." >&2
+        if [[ "$url" =~ \.(tar\.gz|tgz|tar)$ ]]; then
+            # Menggunakan --strip-components=1 untuk menghindari folder berlapis
+            tar -xf "$temp_file" -C "$target_dir" --strip-components=1 || finerr
+        elif [[ "$url" =~ \.zip$ ]]; then
+            unzip -q "$temp_file" -d "$target_dir" || finerr
+        else
+            echo "Format file tidak didukung: $url" >&2
+            finerr
+        fi
+
+        rm -f "$temp_file"
+    else
+        echo "Error: URL tidak dikenali sebagai repositori Git atau file terkompresi yang didukung (tar.gz, tgz, zip, tar): $url" >&2
+        finerr
+    fi
+    
+    echo "$type berhasil diunduh/dikloning ke $target_dir." >&2
+}
+
+# Fungsi untuk mengunduh kernel source dan toolchain
+function download_kernel_tools() {
+    echo "================================================"
+    echo "       Memeriksa dan Mengunduh Dependensi"
+    echo "================================================"
+
+    # 1. Download/Kloning Kernel Source
+    if [ ! -d "$KERNEL_ROOTDIR" ] || [ ! -d "$KERNEL_ROOTDIR/.git" ]; then
+        if [ ! -z "$KERNEL_SOURCE_URL" ]; then
+            echo "Kernel Source tidak ditemukan di $KERNEL_ROOTDIR atau bukan Git repo, mengunduh dari $KERNEL_SOURCE_URL..."
+            rm -rf "$KERNEL_ROOTDIR"
+            clone_or_download "$KERNEL_SOURCE_URL" "$KERNEL_ROOTDIR" "Kernel Source" "$KERNEL_BRANCH_TO_CLONE"
+        else
+            echo "Peringatan: KERNEL_SOURCE_URL tidak diatur. Mengasumsikan Kernel Source sudah tersedia di $KERNEL_ROOTDIR."
+        fi
+    else
+        echo "Kernel Source ditemukan dan merupakan Git repo. Dilewati."
+    fi
+    
+    # 2. Download/Kloning Toolchain (Clang)
+    if [ ! -d "$CLANG_ROOTDIR" ] || [ ! -f "$CLANG_ROOTDIR/bin/clang" ]; then
+        if [ ! -z "$CLANG_URL" ]; then
+            echo "Toolchain (Clang) tidak ditemukan di $CLANG_ROOTDIR, mengunduh dari $CLANG_URL..."
+            rm -rf "$CLANG_ROOTDIR"
+            # Meneruskan CLANG_BRANCH_TO_CLONE sebagai parameter branch
+            clone_or_download "$CLANG_URL" "$CLANG_ROOTDIR" "Clang Toolchain" "$CLANG_BRANCH_TO_CLONE" 
+        else
+            echo "Error: Toolchain (Clang) tidak ditemukan di $CLANG_ROOTDIR dan CLANG_URL tidak diatur." >&2
+            exit 1
+        fi
+    else
+        echo "Toolchain (Clang) ditemukan. Dilewati."
+    fi
+    
+    echo "================================================"
+}
+
+
 # Mengatur variabel lingkungan
 function setup_env() {
     # Pastikan semua variabel Cirrus CI yang diperlukan ada, ini hanya contoh.
@@ -68,15 +159,19 @@ function setup_env() {
     : "${ANYKERNEL:?Error: ANYKERNEL not set}"
     : "${CIRRUS_TASK_ID:?Error: CIRRUS_TASK_ID not set}"
 
+    # --- Variabel Download Baru ---
+    export KERNEL_SOURCE_URL="${KERNEL_SOURCE_URL:-}" 
+    export KERNEL_BRANCH_TO_CLONE="${KERNEL_BRANCH_TO_CLONE:-}" 
+    export CLANG_URL="${CLANG_URL:-}"
+    export CLANG_BRANCH_TO_CLONE="${CLANG_BRANCH_TO_CLONE:-}" # <-- VARIABEL BARU
+    
     # --- Core Build Variables ---
     export ARCH="${ARCH:-arm64}" 
     export CONFIG="${CONFIG:-vendor/bengal-perf_defconfig}" 
     export CLANG_DIR="${CLANG_DIR:-$CIRRUS_WORKING_DIR/greenforce-clang}" 
     
-    # LD_IMPL DIHAPUS, akan menggunakan ld.lld hardcoded di compile()
-    
     export KERNEL_NAME="mrt-Kernel"
-    local KERNEL_ROOTDIR_BASE="$CIRRUS_WORKING_DIR/$DEVICE_CODENAME"
+    local KERNEL_ROOTDIR_BASE="$CIRRUS_WORKING_DIR" 
     export KERNEL_ROOTDIR="$KERNEL_ROOTDIR_BASE"
     export DEVICE_DEFCONFIG="$CONFIG" 
     export CLANG_ROOTDIR="$CLANG_DIR" 
@@ -84,7 +179,7 @@ function setup_env() {
 
     # Verifikasi keberadaan dan versi toolchain
     if [ ! -d "$CLANG_ROOTDIR" ] || [ ! -f "$CLANG_ROOTDIR/bin/clang" ]; then
-        echo "Error: Toolchain (Clang) tidak ditemukan di $CLANG_ROOTDIR." >&2
+        echo "Error: Toolchain (Clang) tidak ditemukan di $CLANG_ROOTDIR. Pastikan telah diunduh atau variabel CLANG_URL sudah diatur." >&2
         exit 1
     fi
 
@@ -98,7 +193,6 @@ function setup_env() {
     export KBUILD_COMPILER_STRING="$CLANG_VER with $LLD_VER"
 
     # Variabel lain
-    # Diubah: Kembali ke Image.gz
     export IMAGE="$KERNEL_OUTDIR/arch/$ARCH/boot/Image.gz" 
     export DATE=$(date +"%Y%m%d-%H%M%S") 
     export BOT_MSG_URL="https://api.telegram.org/bot$TG_TOKEN/sendMessage"
@@ -129,10 +223,15 @@ function check() {
     echo "================================================"
     echo "BUILDER NAME         = ${KBUILD_BUILD_USER}"
     echo "ARCH                 = ${ARCH}" 
-    echo "LINKER               = ld.lld (Default)" # Tampilkan nilai default
+    echo "LINKER               = ld.lld (Default)"
     echo "DEVICE_DEFCONFIG     = ${DEVICE_DEFCONFIG}"
     echo "TOOLCHAIN_VERSION    = ${KBUILD_COMPILER_STRING}"
     echo "KERNEL_ROOTDIR       = ${KERNEL_ROOTDIR}"
+    echo "CLANG_ROOTDIR        = ${CLANG_ROOTDIR}"
+    echo "KERNEL_SOURCE_URL    = ${KERNEL_SOURCE_URL}"
+    echo "KERNEL_BRANCH_CLONE  = ${KERNEL_BRANCH_TO_CLONE:-Default}"
+    echo "CLANG_URL            = ${CLANG_URL}"
+    echo "CLANG_BRANCH_CLONE   = ${CLANG_BRANCH_TO_CLONE:-Default}" # Menampilkan branch Clang
     echo "KSU_ENABLE           = ${KSU_ENABLE}" 
     echo "KSU_VERSION          = ${KSU_VERSION}"
     echo "KSU_LKM_ENABLE       = ${KSU_LKM_ENABLE}"
@@ -183,7 +282,8 @@ function compile() {
         if [[ "$KSU_LKM_ENABLE" == "true" ]]; then
             echo "Mengaktifkan KernelSU sebagai LKM (Loadable Kernel Module)."
             if [ -f $KERNEL_ROOTDIR/drivers/kernelsu/Kconfig ]; then
-                sed -i '/config KSU/,/help/{s/default y/default m/}' $KERNEL_ROOTDIR/drivers/kernelsu/Kconfig || echo "Peringatan: Gagal mengubah KSU menjadi LKM di Kconfig."
+                # Menggunakan perl untuk pengubahan yang lebih andal di lingkungan CI
+                perl -i -pe 's/default y/default m/' $KERNEL_ROOTDIR/drivers/kernelsu/Kconfig || echo "Peringatan: Gagal mengubah KSU menjadi LKM di Kconfig."
             else
                 echo "Peringatan: drivers/kernelsu/Kconfig tidak ditemukan, gagal mengatur KSU sebagai LKM."
             fi
@@ -191,8 +291,6 @@ function compile() {
         
         # 2. SINKRONISASI KONFIGURASI SETELAH MODIFIKASI KSU
         echo "Integrasi KernelSU/SukiSU Selesai. Mensinkronkan konfigurasi (olddefconfig)..."
-        # Ini penting untuk mengadopsi perubahan Kconfig yang dilakukan oleh KSU ke .config
-        # dan mencegah 'Restart config' saat kompilasi penuh.
         make -j$(nproc) O="$KERNEL_OUTDIR" ARCH="$ARCH" olddefconfig || finerr 
         
     elif [ -f nongki.txt ]; then
@@ -207,7 +305,7 @@ function compile() {
     
     echo "Lanjutkan ke kompilasi."
     
-    # 3. Kompilasi hp 
+    # 3. Kompilasi
     local PATH="$CLANG_ROOTDIR/bin:$PATH"
     
     # Tentukan prefix cross-compile berdasarkan ARCH
@@ -261,17 +359,41 @@ function compile() {
 
 # Mendapatkan informasi commit dan kernel
 function get_info() {
+    # Pindahkan ke direktori kernel source untuk mengambil info Git
     cd "$KERNEL_ROOTDIR"
     
     export KERNEL_VERSION=$(grep 'Linux/arm64' "$KERNEL_OUTDIR/.config" | cut -d " " -f3 || echo "N/A")
     export UTS_VERSION=$(grep 'UTS_VERSION' "$KERNEL_OUTDIR/include/generated/compile.h" | cut -d '"' -f2 || echo "N/A")
     export TOOLCHAIN_FROM_HEADER=$(grep 'LINUX_COMPILER' "$KERNEL_OUTDIR/include/generated/compile.h" | cut -d '"' -f2 || echo "N/A")
     
-    export LATEST_COMMIT="$(git log --pretty=format:'%s' -1 || echo "N/A")"
-    export COMMIT_BY="$(git log --pretty=format:'by %an' -1 || echo "N/A")"
-    export BRANCH="$(git rev-parse --abbrev-ref HEAD || echo "N/A")"
-    export KERNEL_SOURCE="${CIRRUS_REPO_OWNER}/${CIRRUS_REPO_NAME}" 
-    export KERNEL_BRANCH="$BRANCH" 
+    # Ambil info Git hanya jika KERNEL_ROOTDIR adalah repositori Git
+    if [ -d "$KERNEL_ROOTDIR/.git" ]; then
+        export LATEST_COMMIT="$(git log --pretty=format:'%s' -1 || echo "N/A")"
+        export COMMIT_BY="$(git log --pretty=format:'by %an' -1 || echo "N/A")"
+        
+        # Tentukan Branch Kernel
+        if [ -n "$KERNEL_BRANCH_TO_CLONE" ]; then
+            export BRANCH="$KERNEL_BRANCH_TO_CLONE (Cloned)"
+        else
+            export BRANCH="$(git rev-parse --abbrev-ref HEAD || echo "N/A")"
+        fi
+
+        export KERNEL_SOURCE="${CIRRUS_REPO_OWNER}/${CIRRUS_REPO_NAME}" 
+        export KERNEL_BRANCH="$BRANCH"
+    else
+        export LATEST_COMMIT="Source Code Downloaded (No Git Info)"
+        export COMMIT_BY="N/A"
+        export BRANCH="N/A"
+        export KERNEL_SOURCE="N/A"
+        export KERNEL_BRANCH="N/A"
+    fi
+    
+    # Tentukan Compiler String Akhir (memasukkan info branch Clang jika dari Git)
+    local CLANG_INFO="$KBUILD_COMPILER_STRING"
+    if [ -d "$CLANG_ROOTDIR/.git" ] && [ -n "$CLANG_BRANCH_TO_CLONE" ]; then
+        CLANG_INFO="$CLANG_INFO (Branch: $CLANG_BRANCH_TO_CLONE)"
+    fi
+    export KBUILD_COMPILER_STRING="$CLANG_INFO"
 }
 
 # Push kernel ke Telegram
@@ -302,6 +424,17 @@ function push() {
         KSU_STATUS="KernelSU: 🚫 Disabled (Clean)"
     fi
     
+    # Membuat link perubahan (hanya jika ada info Git)
+    local CHANGES_LINK_TEXT="N/A"
+    if [[ "$KERNEL_SOURCE" != "N/A" && "$KERNEL_BRANCH" != "N/A" ]]; then
+        local GIT_BRANCH_NAME="$BRANCH"
+        if [[ "$BRANCH" == *"(Cloned)"* ]]; then
+            GIT_BRANCH_NAME="$KERNEL_BRANCH_TO_CLONE"
+        fi
+        
+        CHANGES_LINK_TEXT="<a href=\"https://github.com/$KERNEL_SOURCE/commits/$GIT_BRANCH_NAME\">Here</a>"
+    fi
+    
     # Kirim dokumen ZIP
     curl -F document=@"$ZIP_NAME" "$BOT_DOC_URL" \
         -F chat_id="$TG_CHAT_ID" \
@@ -326,7 +459,7 @@ function push() {
 <b>💡 ARCH:</b> $ARCH
 ==========================
 <b>⏱️ Compile took:</b> $MINUTES minute(s) and $SECONDS second(s).
-<b>⚙️ Changes:</b> <a href=\"https://github.com/$KERNEL_SOURCE/commits/$KERNEL_BRANCH\">Here</a>"
+<b>⚙️ Changes:</b> $CHANGES_LINK_TEXT"
 }
 
 ## Alur Utama
@@ -334,6 +467,7 @@ function push() {
 
 # Panggil fungsi secara berurutan
 setup_env
+download_kernel_tools
 check
 compile
 get_info 

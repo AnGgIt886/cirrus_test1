@@ -14,10 +14,12 @@ env:
   BUILD_HOST: mrtproject
   
   # Kernel source
-  KERNEL_SOURCE: https://github.com/MRT-project/valeryn_xiaomi_sm6115.git
-  KERNEL_BRANCH: master
+  KERNEL_SOURCE_URL: https://github.com/MRT-project/valeryn_xiaomi_sm6115.git
+  KERNEL_BRANCH_TO_CLONE: master
   
   # Toolchain
+  CLANG_URL: https://github.com/greenforce-project/greenforce_clang/releases/download/14092025/greenforce-clang-22.0.0git-14092025.tar.gz
+  CLANG_BRANCH_TO_CLONE: 
   CLANG_DIR: $CIRRUS_WORKING_DIR/greenforce-clang
   
   # Anykernel
@@ -42,9 +44,6 @@ task:
     image: mhmmdfdlyas/dockerfile:k-ubuntu
     cpu: 8
     memory: 32G
-
-  Sync_script:
-    - ./download.sh
 
   Build_kernel_script:
     - ./build.sh
