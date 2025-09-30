@@ -87,7 +87,7 @@ function clone_or_download() {
         # Ekstraksi
         if [[ "$url" =~ \.(tar\.gz|tgz|tar)$ ]]; then
             # Menggunakan --strip-components=1 untuk menghindari folder berlapis
-            tar -xvzf "$temp_file" -C "$target_dir" --strip-components=1 || finerr
+            tar -xf "$temp_file" -C "$target_dir" --strip-components=1 || finerr
         elif [[ "$url" =~ \.zip$ ]]; then
             unzip -q "$temp_file" -d "$target_dir" || finerr
         fi
@@ -153,15 +153,13 @@ function download_kernel_tools() {
 }
 
 
-# Mengatur variabel lingkungan
+# Mengatur variabel lingkungan dasar
 function setup_env() {
-    # Pastikan semua variabel Cirrus CI yang diperlukan ada, ini hanya contoh.
+    # Pastikan semua variabel Cirrus CI yang diperlukan ada
     : "${CIRRUS_WORKING_DIR:?Error: CIRRUS_WORKING_DIR not set}"
     : "${DEVICE_CODENAME:?Error: DEVICE_CODENAME not set}"
     : "${TG_TOKEN:?Error: TG_TOKEN not set}"
     : "${TG_CHAT_ID:?Error: TG_CHAT_ID not set}"
-    : "${BUILD_USER:?Error: BUILD_USER not set}"
-    : "${BUILD_HOST:?Error: BUILD_HOST not set}"
     : "${ANYKERNEL:?Error: ANYKERNEL not set}"
     : "${CIRRUS_TASK_ID:?Error: CIRRUS_TASK_ID not set}"
 
@@ -173,7 +171,8 @@ function setup_env() {
     
     # --- Core Build Variables ---
     export ARCH="${ARCH:-arm64}" 
-    export CONFIG="${CONFIG:-vendor/bengal-perf_defconfig}" 
+    # MENGASUMSIKAN DEFCONFIG ADA DI arch/arm64/configs/
+    export CONFIG="${CONFIG:-bengal-perf_defconfig}" 
     export CLANG_DIR="${CLANG_DIR:-$CIRRUS_WORKING_DIR/greenforce-clang}" 
     
     export KERNEL_NAME="mrt-Kernel"
@@ -182,20 +181,6 @@ function setup_env() {
     export DEVICE_DEFCONFIG="$CONFIG" 
     export CLANG_ROOTDIR="$CLANG_DIR" 
     export KERNEL_OUTDIR="$KERNEL_ROOTDIR/out"
-
-    # Verifikasi toolchain dan dapatkan versi
-    if [ ! -d "$CLANG_ROOTDIR" ] || [ ! -f "$CLANG_ROOTDIR/bin/clang" ]; then
-        true 
-    else
-        # Mendapatkan versi toolchain (Hanya jika toolchain sudah ada)
-        CLANG_VER="$("$CLANG_ROOTDIR"/bin/clang --version | head -n 1 | perl -pe 's/\(http.*?\)//gs' | sed -e 's/  */ /g' -e 's/[[:space:]]*$//')"
-        LLD_VER="$("$CLANG_ROOTDIR"/bin/ld.lld --version | head -n 1)" # Menggunakan ld.lld default
-        
-        # Export variabel KBUILD
-        export KBUILD_BUILD_USER="$BUILD_USER"
-        export KBUILD_BUILD_HOST="$BUILD_HOST"
-        export KBUILD_COMPILER_STRING="$CLANG_VER with $LLD_VER"
-    fi
 
     # Variabel lain
     export IMAGE="$KERNEL_OUTDIR/arch/$ARCH/boot/Image.gz" 
@@ -214,6 +199,25 @@ function setup_env() {
     export KSU_OTHER_URL="${KSU_OTHER_URL:-https://raw.githubusercontent.com/tiann/KernelSU}" 
 }
 
+# Fungsi BARU untuk mengatur variabel toolchain setelah diunduh
+function setup_toolchain_env() {
+    # 1. Atur variabel BUILDER (Jika tidak disetel di env, gunakan default)
+    export KBUILD_BUILD_USER="${BUILD_USER:-Unknown User}"
+    export KBUILD_BUILD_HOST="${BUILD_HOST:-CirrusCI}"
+    
+    # 2. Ambil versi Toolchain
+    if [ -d "$CLANG_ROOTDIR" ] && [ -f "$CLANG_ROOTDIR/bin/clang" ]; then
+        # Mendapatkan versi toolchain
+        CLANG_VER="$("$CLANG_ROOTDIR"/bin/clang --version | head -n 1 | perl -pe 's/\(http.*?\)//gs' | sed -e 's/  */ /g' -e 's/[[:space:]]*$//')"
+        LLD_VER="$("$CLANG_ROOTDIR"/bin/ld.lld --version | head -n 1)" # Menggunakan ld.lld default
+        
+        export KBUILD_COMPILER_STRING="$CLANG_VER with $LLD_VER"
+    else
+        export KBUILD_COMPILER_STRING="Toolchain Not Found"
+    fi
+}
+
+
 # Menampilkan info lingkungan
 function check() {
     echo "================================================"
@@ -223,7 +227,7 @@ function check() {
     echo "     /_/   /_/|_/ /_/   /___/   /_/           "
     echo "    ___  ___  ____     _________________      "
     echo "   / _ \/ _ \/ __ \__ / / __/ ___/_  __/      "
-    echo "  / ___/ , _/ /_/ / // / _// /__  / /         " # <-- PERBAIKAN: Menambahkan 'echo'
+    echo "  / ___/ , _/ /_/ / // / _// /__  / /         " # <-- PERBAIKAN SYNTAX
     echo " /_/  /_/|_|\____/\___/___/\___/ /_/          "
     echo "================================================"
     echo "BUILDER NAME         = ${KBUILD_BUILD_USER}"
@@ -243,17 +247,16 @@ function check() {
     echo "================================================"
 }
 
-# Proses kompilasi kernel (VERSI MODIFIKASI UNTUK MENGHINDARI RESTART CONFIG)
+# Proses kompilasi kernel
 function compile() {
     # Amankan bahwa variabel KBUILD_COMPILER_STRING telah diinisialisasi
-    if [ -z "$KBUILD_COMPILER_STRING" ]; then
-         if [ ! -d "$CLANG_ROOTDIR" ] || [ ! -f "$CLANG_ROOTDIR/bin/clang" ]; then
+    if [ -z "$KBUILD_COMPILER_STRING" ] || [ "$KBUILD_COMPILER_STRING" == "Toolchain Not Found" ]; then
+         # Panggil setup_toolchain_env jika variabel kosong (safety net)
+         setup_toolchain_env
+         if [ "$KBUILD_COMPILER_STRING" == "Toolchain Not Found" ]; then
              echo "Error: Toolchain (Clang) tidak ditemukan di $CLANG_ROOTDIR setelah proses download." >&2
              exit 1
          fi
-         CLANG_VER="$("$CLANG_ROOTDIR"/bin/clang --version | head -n 1 | perl -pe 's/\(http.*?\)//gs' | sed -e 's/  */ /g' -e 's/[[:space:]]*$//')"
-         LLD_VER="$("$CLANG_ROOTDIR"/bin/ld.lld --version | head -n 1)"
-         export KBUILD_COMPILER_STRING="$CLANG_VER with $LLD_VER"
     fi
 
     cd "$KERNEL_ROOTDIR"
@@ -266,6 +269,7 @@ function compile() {
     
     # 1. KONFIGURASI DEFCONFIG AWAL
     echo "Membuat defconfig awal..."
+    # make akan mencari $DEVICE_DEFCONFIG di arch/$ARCH/configs/
     make -j$(nproc) O="$KERNEL_OUTDIR" ARCH="$ARCH" "$DEVICE_DEFCONFIG" || finerr
     
     # --- START Blok Conditional KSU Integration ---
@@ -484,6 +488,7 @@ function push() {
 # Panggil fungsi secara berurutan
 setup_env
 download_kernel_tools
+setup_toolchain_env # <-- BARU: Memastikan variabel toolchain terisi setelah download
 check
 compile
 get_info 

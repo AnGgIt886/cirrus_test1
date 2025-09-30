@@ -16,7 +16,7 @@ env:
   # Kernel source
   KERNEL_SOURCE_URL: https://github.com/MRT-project/valeryn_xiaomi_sm6115.git
   KERNEL_BRANCH_TO_CLONE: master
-  KERNEL_DIR: $DEVICE_CODENAME
+  KERNEL_ROOTDIR: $DEVICE_CODENAME
   
   # Toolchain
   CLANG_URL: https://github.com/greenforce-project/greenforce_clang/releases/download/14092025/greenforce-clang-22.0.0git-14092025.tar.gz
