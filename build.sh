@@ -87,7 +87,7 @@ function clone_or_download() {
         # Ekstraksi
         if [[ "$url" =~ \.(tar\.gz|tgz|tar)$ ]]; then
             # Menggunakan --strip-components=1 untuk menghindari folder berlapis
-            tar -xf "$temp_file" -C "$target_dir" --strip-components=1 || finerr
+            tar -xvzf "$temp_file" -C "$target_dir" --strip-components=1 || finerr
         elif [[ "$url" =~ \.zip$ ]]; then
             unzip -q "$temp_file" -d "$target_dir" || finerr
         fi
