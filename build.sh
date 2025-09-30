@@ -207,8 +207,8 @@ function compile() {
     
     echo "Lanjutkan ke kompilasi."
     
-    # 3. Kompilasi
-    local BIN_DIR="$CLANG_ROOTDIR/bin"
+    # 3. Kompilasi hp 
+    local PATH="$CLANG_ROOTDIR/bin:$PATH"
     
     # Tentukan prefix cross-compile berdasarkan ARCH
     local CC_PREFIX
@@ -227,21 +227,23 @@ function compile() {
 
     # Target make Image.gz
     make -j$(nproc) ARCH="$ARCH" O="$KERNEL_OUTDIR" \
-        CC="$BIN_DIR/clang" \
-        AR="$BIN_DIR/llvm-ar" \
-        AS="$BIN_DIR/llvm-as" \
-        LD="$BIN_DIR/ld.lld" \
-        NM="$BIN_DIR/llvm-nm" \
-        OBJCOPY="$BIN_DIR/llvm-objcopy" \
-        OBJDUMP="$BIN_DIR/llvm-objdump" \
-        OBJSIZE="$BIN_DIR/llvm-size" \
-        READELF="$BIN_DIR/llvm-readelf" \
-        STRIP="$BIN_DIR/llvm-strip" \
-        HOSTCC="$BIN_DIR/clang" \
-        HOSTCXX="$BIN_DIR/clang++" \
-        HOSTLD="$BIN_DIR/ld.lld" \
-        CROSS_COMPILE="$BIN_DIR/$CC_PREFIX" \
-        CROSS_COMPILE_ARM32="$BIN_DIR/$CC32_PREFIX" \
+        LLVM=1 \
+        LLVM_IAS=1 \
+        CC="clang" \
+        AR="llvm-ar" \
+        AS="llvm-as" \
+        LD="ld.lld" \
+        NM="llvm-nm" \
+        OBJCOPY="llvm-objcopy" \
+        OBJDUMP="llvm-objdump" \
+        OBJSIZE="llvm-size" \
+        READELF="llvm-readelf" \
+        STRIP="llvm-strip" \
+        HOSTCC="clang" \
+        HOSTCXX="clang++" \
+        HOSTLD="ld.lld" \
+        CROSS_COMPILE="$CC_PREFIX" \
+        CROSS_COMPILE_ARM32="$CC32_PREFIX" \
         Image.gz || finerr # Target kompilasi Image.gz
         
     if ! [ -a "$IMAGE" ]; then
