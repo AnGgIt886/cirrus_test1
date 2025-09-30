@@ -84,7 +84,13 @@ function clone_or_download() {
         temp_file=$(mktemp)
 
         echo "Mengunduh file terkompresi..." >&2
-        curl -Ls -o "$temp_file" "$url" || finerr
+        # Cek apakah url adalah link file tar.gz/zip dan lakukan pengunduhan
+        if curl -Ls -o "$temp_file" "$url"; then
+             echo "File berhasil diunduh." >&2
+        else
+             echo "Error: Gagal mengunduh file dari URL: $url" >&2
+             finerr
+        fi
 
         # Membuat direktori target jika belum ada
         mkdir -p "$target_dir"
@@ -116,13 +122,17 @@ function download_kernel_tools() {
     echo "================================================"
 
     # 1. Download/Kloning Kernel Source
+    # Periksa apakah direktori source ada ATAU apakah source di-checkout oleh CI (biasanya ada .git)
     if [ ! -d "$KERNEL_ROOTDIR" ] || [ ! -d "$KERNEL_ROOTDIR/.git" ]; then
         if [ ! -z "$KERNEL_SOURCE_URL" ]; then
             echo "Kernel Source tidak ditemukan di $KERNEL_ROOTDIR atau bukan Git repo, mengunduh dari $KERNEL_SOURCE_URL..."
             rm -rf "$KERNEL_ROOTDIR"
+            # Panggil clone_or_download dengan KERNEL_SOURCE_URL dan KERNEL_BRANCH_TO_CLONE
             clone_or_download "$KERNEL_SOURCE_URL" "$KERNEL_ROOTDIR" "Kernel Source" "$KERNEL_BRANCH_TO_CLONE"
         else
-            echo "Peringatan: KERNEL_SOURCE_URL tidak diatur. Mengasumsikan Kernel Source sudah tersedia di $KERNEL_ROOTDIR."
+            # Jika KERNEL_SOURCE_URL tidak diatur, dan source tidak ada, maka ini error.
+            echo "Error: Kernel Source tidak ditemukan di $KERNEL_ROOTDIR dan KERNEL_SOURCE_URL tidak diatur." >&2
+            exit 1
         fi
     else
         echo "Kernel Source ditemukan dan merupakan Git repo. Dilewati."
@@ -133,7 +143,7 @@ function download_kernel_tools() {
         if [ ! -z "$CLANG_URL" ]; then
             echo "Toolchain (Clang) tidak ditemukan di $CLANG_ROOTDIR, mengunduh dari $CLANG_URL..."
             rm -rf "$CLANG_ROOTDIR"
-            # Meneruskan CLANG_BRANCH_TO_CLONE sebagai parameter branch
+            # Panggil clone_or_download dengan CLANG_URL dan CLANG_BRANCH_TO_CLONE
             clone_or_download "$CLANG_URL" "$CLANG_ROOTDIR" "Clang Toolchain" "$CLANG_BRANCH_TO_CLONE" 
         else
             echo "Error: Toolchain (Clang) tidak ditemukan di $CLANG_ROOTDIR dan CLANG_URL tidak diatur." >&2
@@ -160,10 +170,14 @@ function setup_env() {
     : "${CIRRUS_TASK_ID:?Error: CIRRUS_TASK_ID not set}"
 
     # --- Variabel Download Baru ---
+    # URL source kernel (Git atau tar.gz/zip)
     export KERNEL_SOURCE_URL="${KERNEL_SOURCE_URL:-}" 
+    # Branch kernel yang akan dikloning (hanya berlaku jika KERNEL_SOURCE_URL adalah Git)
     export KERNEL_BRANCH_TO_CLONE="${KERNEL_BRANCH_TO_CLONE:-}" 
+    # URL toolchain (Git atau tar.gz/zip)
     export CLANG_URL="${CLANG_URL:-}"
-    export CLANG_BRANCH_TO_CLONE="${CLANG_BRANCH_TO_CLONE:-}" # <-- VARIABEL BARU
+    # Branch toolchain yang akan dikloning (hanya berlaku jika CLANG_URL adalah Git)
+    export CLANG_BRANCH_TO_CLONE="${CLANG_BRANCH_TO_CLONE:-}" 
     
     # --- Core Build Variables ---
     export ARCH="${ARCH:-arm64}" 
@@ -171,26 +185,28 @@ function setup_env() {
     export CLANG_DIR="${CLANG_DIR:-$CIRRUS_WORKING_DIR/greenforce-clang}" 
     
     export KERNEL_NAME="mrt-Kernel"
+    # Secara default, asumsikan KERNEL_ROOTDIR adalah CIRRUS_WORKING_DIR
     local KERNEL_ROOTDIR_BASE="$CIRRUS_WORKING_DIR" 
     export KERNEL_ROOTDIR="$KERNEL_ROOTDIR_BASE"
     export DEVICE_DEFCONFIG="$CONFIG" 
     export CLANG_ROOTDIR="$CLANG_DIR" 
     export KERNEL_OUTDIR="$KERNEL_ROOTDIR/out"
 
-    # Verifikasi keberadaan dan versi toolchain
+    # Verifikasi toolchain dan dapatkan versi
     if [ ! -d "$CLANG_ROOTDIR" ] || [ ! -f "$CLANG_ROOTDIR/bin/clang" ]; then
-        echo "Error: Toolchain (Clang) tidak ditemukan di $CLANG_ROOTDIR. Pastikan telah diunduh atau variabel CLANG_URL sudah diatur." >&2
-        exit 1
+        # Jika toolchain tidak ditemukan, skrip akan mengandalkan download_kernel_tools() untuk mengunduh, 
+        # jadi kita lewati verifikasi versi di sini.
+        true 
+    else
+        # Mendapatkan versi toolchain (Hanya jika toolchain sudah ada)
+        CLANG_VER="$("$CLANG_ROOTDIR"/bin/clang --version | head -n 1 | perl -pe 's/\(http.*?\)//gs' | sed -e 's/  */ /g' -e 's/[[:space:]]*$//')"
+        LLD_VER="$("$CLANG_ROOTDIR"/bin/ld.lld --version | head -n 1)" # Menggunakan ld.lld default
+        
+        # Export variabel KBUILD
+        export KBUILD_BUILD_USER="$BUILD_USER"
+        export KBUILD_BUILD_HOST="$BUILD_HOST"
+        export KBUILD_COMPILER_STRING="$CLANG_VER with $LLD_VER"
     fi
-
-    # Mendapatkan versi toolchain
-    CLANG_VER="$("$CLANG_ROOTDIR"/bin/clang --version | head -n 1 | perl -pe 's/\(http.*?\)//gs' | sed -e 's/  */ /g' -e 's/[[:space:]]*$//')"
-    LLD_VER="$("$CLANG_ROOTDIR"/bin/ld.lld --version | head -n 1)" # Menggunakan ld.lld default
-
-    # Export variabel KBUILD
-    export KBUILD_BUILD_USER="$BUILD_USER"
-    export KBUILD_BUILD_HOST="$BUILD_HOST"
-    export KBUILD_COMPILER_STRING="$CLANG_VER with $LLD_VER"
 
     # Variabel lain
     export IMAGE="$KERNEL_OUTDIR/arch/$ARCH/boot/Image.gz" 
@@ -229,9 +245,9 @@ function check() {
     echo "KERNEL_ROOTDIR       = ${KERNEL_ROOTDIR}"
     echo "CLANG_ROOTDIR        = ${CLANG_ROOTDIR}"
     echo "KERNEL_SOURCE_URL    = ${KERNEL_SOURCE_URL}"
-    echo "KERNEL_BRANCH_CLONE  = ${KERNEL_BRANCH_TO_CLONE:-Default}"
+    echo "KERNEL_BRANCH_CLONE  = ${KERNEL_BRANCH_TO_CLONE:-N/A}"
     echo "CLANG_URL            = ${CLANG_URL}"
-    echo "CLANG_BRANCH_CLONE   = ${CLANG_BRANCH_TO_CLONE:-Default}" # Menampilkan branch Clang
+    echo "CLANG_BRANCH_CLONE   = ${CLANG_BRANCH_TO_CLONE:-N/A}"
     echo "KSU_ENABLE           = ${KSU_ENABLE}" 
     echo "KSU_VERSION          = ${KSU_VERSION}"
     echo "KSU_LKM_ENABLE       = ${KSU_LKM_ENABLE}"
@@ -240,6 +256,18 @@ function check() {
 
 # Proses kompilasi kernel (VERSI MODIFIKASI UNTUK MENGHINDARI RESTART CONFIG)
 function compile() {
+    # Amankan bahwa variabel KBUILD_COMPILER_STRING telah diinisialisasi
+    if [ -z "$KBUILD_COMPILER_STRING" ]; then
+         # Lakukan verifikasi dan inisialisasi versi toolchain di sini jika setup_env gagal
+         if [ ! -d "$CLANG_ROOTDIR" ] || [ ! -f "$CLANG_ROOTDIR/bin/clang" ]; then
+             echo "Error: Toolchain (Clang) tidak ditemukan di $CLANG_ROOTDIR setelah proses download." >&2
+             exit 1
+         fi
+         CLANG_VER="$("$CLANG_ROOTDIR"/bin/clang --version | head -n 1 | perl -pe 's/\(http.*?\)//gs' | sed -e 's/  */ /g' -e 's/[[:space:]]*$//')"
+         LLD_VER="$("$CLANG_ROOTDIR"/bin/ld.lld --version | head -n 1)"
+         export KBUILD_COMPILER_STRING="$CLANG_VER with $LLD_VER"
+    fi
+
     cd "$KERNEL_ROOTDIR"
 
     tg_post_msg "<b>Buiild Kernel started..</b>%0A<b>Defconfig:</b> <code>$DEVICE_DEFCONFIG</code>%0A<b>Toolchain:</b> <code>$KBUILD_COMPILER_STRING</code>%0A<b>Arsitektur:</b> <code>$ARCH</code>"
