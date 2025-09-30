@@ -223,7 +223,7 @@ function check() {
     echo "     /_/   /_/|_/ /_/   /___/   /_/           "
     echo "    ___  ___  ____     _________________      "
     echo "   / _ \/ _ \/ __ \__ / / __/ ___/_  __/      "
-    "  / ___/ , _/ /_/ / // / _// /__  / /         "
+    echo "  / ___/ , _/ /_/ / // / _// /__  / /         " # <-- PERBAIKAN: Menambahkan 'echo'
     echo " /_/  /_/|_|\____/\___/___/\___/ /_/          "
     echo "================================================"
     echo "BUILDER NAME         = ${KBUILD_BUILD_USER}"
@@ -236,7 +236,7 @@ function check() {
     echo "KERNEL_SOURCE_URL    = ${KERNEL_SOURCE_URL}"
     echo "KERNEL_BRANCH_CLONE  = ${KERNEL_BRANCH_TO_CLONE:-N/A}"
     echo "CLANG_URL            = ${CLANG_URL}"
-    echo "CLANG_BRANCH_CLONE   = ${CLANG_BRANCH_TO_CLONE:-N/A}"
+    echo "CLANG_BRANCH_TO_CLONE    = ${CLANG_BRANCH_TO_CLONE:-N/A}"
     echo "KSU_ENABLE           = ${KSU_ENABLE}" 
     echo "KSU_VERSION          = ${KSU_VERSION}"
     echo "KSU_LKM_ENABLE       = ${KSU_LKM_ENABLE}"
@@ -305,7 +305,7 @@ function compile() {
             fi
         fi
         
-        # 2. SINKRONISASI KONFIGURASI SETELAH MODIFIKASI KSU
+        # 2. SINKRONISASI KONFIGURASI SETELAN MODIFIKASI KSU
         echo "Integrasi KernelSU/SukiSU Selesai. Mensinkronkan konfigurasi (olddefconfig)..."
         make -j$(nproc) O="$KERNEL_OUTDIR" ARCH="$ARCH" olddefconfig || finerr 
         
