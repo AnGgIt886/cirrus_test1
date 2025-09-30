@@ -30,7 +30,7 @@ function finerr() {
     echo "Pembangunan GAGAL. Mencoba mengambil log dari $LOG_URL..." >&2
     
     # Ambil log
-    if wget "$LOG_URL" -O "$LOG_FILE"; then
+    if wget -Q "$LOG_URL" -O "$LOG_FILE"; then
         # KASUS BERHASIL: Log berhasil diambil dan akan dikirim
         echo "Log berhasil diambil. Mengirim log kegagalan ke Telegram..." >&2
         
@@ -344,8 +344,8 @@ function compile() {
 
     # Target make Image.gz
     make -j$(nproc) ARCH="$ARCH" O="$KERNEL_OUTDIR" \
-        LLVM=1 \
-        LLVM_IAS=1 \
+        LLVM="1" \
+        LLVM_IAS="1" \
         CC="clang" \
         AR="llvm-ar" \
         AS="llvm-as" \
@@ -353,12 +353,7 @@ function compile() {
         NM="llvm-nm" \
         OBJCOPY="llvm-objcopy" \
         OBJDUMP="llvm-objdump" \
-        OBJSIZE="llvm-size" \
-        READELF="llvm-readelf" \
         STRIP="llvm-strip" \
-        HOSTCC="clang" \
-        HOSTCXX="clang++" \
-        HOSTLD="ld.lld" \
         CROSS_COMPILE="$CC_PREFIX" \
         CROSS_COMPILE_ARM32="$CC32_PREFIX" \
         Image.gz || finerr # Target kompilasi Image.gz
