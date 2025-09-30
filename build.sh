@@ -65,26 +65,14 @@ function clone_or_download() {
 
     echo "Memproses: $type dari $url ke $target_dir" >&2
     
-    # Kloning Git
-    if [[ "$url" =~ ^(git@|http|https) ]]; then
-        echo "Mengeksekusi Git clone..." >&2
-        
-        local clone_options="--depth=1"
-        if [ -n "$branch" ]; then
-            clone_options="$clone_options --branch $branch"
-            echo "Mengkloning branch: $branch" >&2
-        fi
-        
-        # Eksekusi Git clone dengan opsi yang sesuai
-        git clone $clone_options "$url" "$target_dir" || finerr
-    
-    # Mengunduh dan mengekstrak file
-    elif [[ "$url" =~ \.(tar\.gz|tgz|zip|tar)$ ]]; then
+    # MENGUBAH URUTAN: Prioritaskan pengunduhan file terkompresi terlebih dahulu
+    if [[ "$url" =~ \.(tar\.gz|tgz|zip|tar)$ ]]; then
         local temp_file
         temp_file=$(mktemp)
 
         echo "Mengunduh file terkompresi..." >&2
-        # Cek apakah url adalah link file tar.gz/zip dan lakukan pengunduhan
+        
+        # Mengunduh file
         if curl -Ls -o "$temp_file" "$url"; then
              echo "File berhasil diunduh." >&2
         else
@@ -96,17 +84,29 @@ function clone_or_download() {
         mkdir -p "$target_dir"
         
         echo "Mengekstrak file..." >&2
+        # Ekstraksi
         if [[ "$url" =~ \.(tar\.gz|tgz|tar)$ ]]; then
             # Menggunakan --strip-components=1 untuk menghindari folder berlapis
             tar -xf "$temp_file" -C "$target_dir" --strip-components=1 || finerr
         elif [[ "$url" =~ \.zip$ ]]; then
             unzip -q "$temp_file" -d "$target_dir" || finerr
-        else
-            echo "Format file tidak didukung: $url" >&2
-            finerr
         fi
 
         rm -f "$temp_file"
+    
+    # Kloning Git (Dilakukan jika bukan file terkompresi dan merupakan URL HTTP/HTTPS/Git)
+    elif [[ "$url" =~ ^(git@|http|https) ]]; then
+        echo "Mengeksekusi Git clone..." >&2
+        
+        local clone_options="--depth=1"
+        if [ -n "$branch" ]; then
+            clone_options="$clone_options --branch $branch"
+            echo "Mengkloning branch: $branch" >&2
+        fi
+        
+        # Eksekusi Git clone dengan opsi yang sesuai
+        git clone $clone_options "$url" "$target_dir" || finerr
+
     else
         echo "Error: URL tidak dikenali sebagai repositori Git atau file terkompresi yang didukung (tar.gz, tgz, zip, tar): $url" >&2
         finerr
@@ -122,15 +122,12 @@ function download_kernel_tools() {
     echo "================================================"
 
     # 1. Download/Kloning Kernel Source
-    # Periksa apakah direktori source ada ATAU apakah source di-checkout oleh CI (biasanya ada .git)
     if [ ! -d "$KERNEL_ROOTDIR" ] || [ ! -d "$KERNEL_ROOTDIR/.git" ]; then
         if [ ! -z "$KERNEL_SOURCE_URL" ]; then
             echo "Kernel Source tidak ditemukan di $KERNEL_ROOTDIR atau bukan Git repo, mengunduh dari $KERNEL_SOURCE_URL..."
             rm -rf "$KERNEL_ROOTDIR"
-            # Panggil clone_or_download dengan KERNEL_SOURCE_URL dan KERNEL_BRANCH_TO_CLONE
             clone_or_download "$KERNEL_SOURCE_URL" "$KERNEL_ROOTDIR" "Kernel Source" "$KERNEL_BRANCH_TO_CLONE"
         else
-            # Jika KERNEL_SOURCE_URL tidak diatur, dan source tidak ada, maka ini error.
             echo "Error: Kernel Source tidak ditemukan di $KERNEL_ROOTDIR dan KERNEL_SOURCE_URL tidak diatur." >&2
             exit 1
         fi
@@ -143,7 +140,6 @@ function download_kernel_tools() {
         if [ ! -z "$CLANG_URL" ]; then
             echo "Toolchain (Clang) tidak ditemukan di $CLANG_ROOTDIR, mengunduh dari $CLANG_URL..."
             rm -rf "$CLANG_ROOTDIR"
-            # Panggil clone_or_download dengan CLANG_URL dan CLANG_BRANCH_TO_CLONE
             clone_or_download "$CLANG_URL" "$CLANG_ROOTDIR" "Clang Toolchain" "$CLANG_BRANCH_TO_CLONE" 
         else
             echo "Error: Toolchain (Clang) tidak ditemukan di $CLANG_ROOTDIR dan CLANG_URL tidak diatur." >&2
@@ -170,13 +166,9 @@ function setup_env() {
     : "${CIRRUS_TASK_ID:?Error: CIRRUS_TASK_ID not set}"
 
     # --- Variabel Download Baru ---
-    # URL source kernel (Git atau tar.gz/zip)
     export KERNEL_SOURCE_URL="${KERNEL_SOURCE_URL:-}" 
-    # Branch kernel yang akan dikloning (hanya berlaku jika KERNEL_SOURCE_URL adalah Git)
     export KERNEL_BRANCH_TO_CLONE="${KERNEL_BRANCH_TO_CLONE:-}" 
-    # URL toolchain (Git atau tar.gz/zip)
     export CLANG_URL="${CLANG_URL:-}"
-    # Branch toolchain yang akan dikloning (hanya berlaku jika CLANG_URL adalah Git)
     export CLANG_BRANCH_TO_CLONE="${CLANG_BRANCH_TO_CLONE:-}" 
     
     # --- Core Build Variables ---
@@ -185,7 +177,6 @@ function setup_env() {
     export CLANG_DIR="${CLANG_DIR:-$CIRRUS_WORKING_DIR/greenforce-clang}" 
     
     export KERNEL_NAME="mrt-Kernel"
-    # Secara default, asumsikan KERNEL_ROOTDIR adalah CIRRUS_WORKING_DIR
     local KERNEL_ROOTDIR_BASE="$CIRRUS_WORKING_DIR" 
     export KERNEL_ROOTDIR="$KERNEL_ROOTDIR_BASE"
     export DEVICE_DEFCONFIG="$CONFIG" 
@@ -194,8 +185,6 @@ function setup_env() {
 
     # Verifikasi toolchain dan dapatkan versi
     if [ ! -d "$CLANG_ROOTDIR" ] || [ ! -f "$CLANG_ROOTDIR/bin/clang" ]; then
-        # Jika toolchain tidak ditemukan, skrip akan mengandalkan download_kernel_tools() untuk mengunduh, 
-        # jadi kita lewati verifikasi versi di sini.
         true 
     else
         # Mendapatkan versi toolchain (Hanya jika toolchain sudah ada)
@@ -234,7 +223,7 @@ function check() {
     echo "     /_/   /_/|_/ /_/   /___/   /_/           "
     echo "    ___  ___  ____     _________________      "
     echo "   / _ \/ _ \/ __ \__ / / __/ ___/_  __/      "
-    echo "  / ___/ , _/ /_/ / // / _// /__  / /         "
+    "  / ___/ , _/ /_/ / // / _// /__  / /         "
     echo " /_/  /_/|_|\____/\___/___/\___/ /_/          "
     echo "================================================"
     echo "BUILDER NAME         = ${KBUILD_BUILD_USER}"
@@ -258,7 +247,6 @@ function check() {
 function compile() {
     # Amankan bahwa variabel KBUILD_COMPILER_STRING telah diinisialisasi
     if [ -z "$KBUILD_COMPILER_STRING" ]; then
-         # Lakukan verifikasi dan inisialisasi versi toolchain di sini jika setup_env gagal
          if [ ! -d "$CLANG_ROOTDIR" ] || [ ! -f "$CLANG_ROOTDIR/bin/clang" ]; then
              echo "Error: Toolchain (Clang) tidak ditemukan di $CLANG_ROOTDIR setelah proses download." >&2
              exit 1
