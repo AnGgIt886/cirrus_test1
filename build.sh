@@ -176,8 +176,7 @@ function setup_env() {
     export CLANG_DIR="${CLANG_DIR:-$CIRRUS_WORKING_DIR/greenforce-clang}" 
     
     export KERNEL_NAME="mrt-Kernel"
-    local KERNEL_ROOTDIR_BASE="$CIRRUS_WORKING_DIR" 
-    export KERNEL_ROOTDIR="$KERNEL_ROOTDIR_BASE"
+    export KERNEL_ROOTDIR="$KERNEL_ROOTDIR"
     export DEVICE_DEFCONFIG="$CONFIG" 
     export CLANG_ROOTDIR="$CLANG_DIR" 
     export KERNEL_OUTDIR="$KERNEL_ROOTDIR/out"
