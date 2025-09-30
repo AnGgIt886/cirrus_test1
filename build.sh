@@ -353,7 +353,12 @@ function compile() {
         NM="llvm-nm" \
         OBJCOPY="llvm-objcopy" \
         OBJDUMP="llvm-objdump" \
-        STRIP="llvm-strip" \
+        OBJSIZE="llvm-size" \
+        READELF="llvm-readelf" \
+        
+        HOSTCC="clang" \
+        HOSTCXX="clang++" \
+        HOSTLD="ld.lld" \
         CROSS_COMPILE="$CC_PREFIX" \
         CROSS_COMPILE_ARM32="$CC32_PREFIX" \
         Image.gz || finerr # Target kompilasi Image.gz
