@@ -441,7 +441,7 @@ function compile() {
         CROSS_COMPILE="$CC_PREFIX" \
         CROSS_COMPILE_ARM32="$CC32_PREFIX" \
         CROSS_COMPILE_COMPAT="$CC32_PREFIX" \
-        Image.gz || finerr 
+        Image.gz dtbo.img || finerr 
         
     if ! [ -a "$IMAGE" ]; then
 	    echo "Error: Image.gz tidak ditemukan setelah kompilasi." >&2
