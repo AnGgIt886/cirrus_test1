@@ -541,13 +541,7 @@ function push() {
     
     local CHANGES_LINK_TEXT="N/A"
     if [[ "$KERNEL_SOURCE" != "N/A" && "$KERNEL_BRANCH" != "N/A" ]]; then
-        local GIT_BRANCH_NAME="$BRANCH"
-        if [[ "$BRANCH" == *"(Cloned)"* ]]; then
-            # Hilangkan "(Cloned)" untuk URL
-            GIT_BRANCH_NAME="${KERNEL_BRANCH_TO_CLONE}"
-        fi
-        
-        CHANGES_LINK_TEXT="<a href=\"https://github.com/$KERNEL_SOURCE/commits/$GIT_BRANCH_NAME\">Here</a>"
+        CHANGES_LINK_TEXT="<a href=\"https://github.com/$KERNEL_SOURCE/commits/$KERNEL_BRANCH_TO_CLONE\">Here</a>"
     fi
     
     # Kirim dokumen ZIP
