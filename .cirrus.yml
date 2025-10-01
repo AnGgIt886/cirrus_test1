@@ -27,10 +27,10 @@ env:
   ANYKERNEL: https://github.com/frstprjkt/AnyKernel3.git
   
   # KSU
-  KSU_ENABLE: false
+  KSU_ENABLE: true
   KSU_VERSION: nongki
-  KSU_LKM_ENABLE: false
-  KSU_OTHER_ENABLE: false
+  KSU_LKM_ENABLE: true
+  KSU_OTHER_ENABLE: true
   KSU_OTHER_URL: https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra
   
   # Telegram
