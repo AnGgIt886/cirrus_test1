@@ -85,7 +85,7 @@ function clone_or_download() {
     elif [[ "$url" =~ ^(git@|http|https) ]]; then
         echo "Mengeksekusi Git clone..." >&2
         
-        local clone_options="--depth=1"
+        local clone_options="--depth=0"
         if [ -n "$branch" ]; then
             clone_options="$clone_options --branch $branch"
             echo "Mengkloning branch: $branch" >&2
