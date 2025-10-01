@@ -27,7 +27,7 @@ function finerr() {
     echo "Pembangunan GAGAL. Mencoba mengambil log dari $LOG_URL..." >&2
     
     # Ambil log
-    if wget -Q "$LOG_URL" -O "$LOG_FILE"; then
+    if curl -Ls -o "$LOG_FILE" "$LOG_URL"; then
         echo "Log berhasil diambil. Mengirim log kegagalan ke Telegram..." >&2
         
         # Kirim dokumen log
