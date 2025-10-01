@@ -46,6 +46,9 @@ task:
     cpu: 8
     memory: 32G
 
+  Setup_script:
+    - sudo apt-get install --no-install-recommends -y binutils git make bc bison openssl curl zip kmod cpio flex libelf-dev libssl-dev libtfm-dev libc6-dev device-tree-compiler ca-certificates python3 xz-utils aria2 build-essential ccache pigz coccinelle parallel clang lld binutils-aarch64-linux-gnu binutils-arm-linux-gnuabeihf
+
   Build_kernel_script:
     - ./build.sh
     - ./done.sh
