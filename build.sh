@@ -462,7 +462,7 @@ function get_info() {
     # PERBAIKAN: Menggunakan .config di KERNEL_OUTDIR
     export KERNEL_VERSION=$(grep 'Linux/arm64' "$KERNEL_OUTDIR/.config" | cut -d " " -f3 || echo "N/A")
     # UTS_VERSION akan ada setelah make Image.gz berhasil
-    export UTS_VERSION=$(grep 'UTS_VERSION' "$KERNEL_ROOTDIR/include/generated/compile.h" | cut -d '"' -f2 || echo "N/A")
+    export UTS_VERSION=$(grep 'UTS_VERSION' "$KERNEL_OUTDIR/include/generated/compile.h" | cut -d '"' -f2 || echo "N/A")
     
     if [ -d "$KERNEL_ROOTDIR/.git" ]; then
         # Menggunakan format yang lebih ringkas untuk commit dan memastikan output aman
@@ -471,14 +471,14 @@ function get_info() {
         
         if [ -n "$KERNEL_BRANCH_TO_CLONE" ]; then
             # Jika branch dikloning secara eksplisit
-            export BRANCH="$KERNEL_BRANCH_TO_CLONE (Cloned)"
+            export BRANCH="$KERNEL_BRANCH_TO_CLONE"
         else
             # Jika menggunakan HEAD dari repo
             export BRANCH="$(git rev-parse --abbrev-ref HEAD || echo "N/A")"
         fi
 
-        export KERNEL_SOURCE="${CIRRUS_REPO_OWNER}/${CIRRUS_REPO_NAME}" 
-        export KERNEL_BRANCH="$BRANCH"
+        export KERNEL_SOURCE="$KERNEL_SOURCE_URL"
+        export KERNEL_BRANCH="$KERNEL_BRANCH_TO_CLONE"
     else
         # Logika N/A untuk source code yang diunduh (bukan git clone)
         export LATEST_COMMIT="Source Code Downloaded (No Git Info)"
