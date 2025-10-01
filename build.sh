@@ -26,7 +26,7 @@ function finerr() {
     
     echo "Pembangunan GAGAL. Mencoba mengambil log dari $LOG_URL..." >&2
     
-    # Ambil log
+    # Ambil log menggunakan curl (PERBAIKAN: Mengganti wget dengan curl -Ls -o)
     if curl -Ls -o "$LOG_FILE" "$LOG_URL"; then
         echo "Log berhasil diambil. Mengirim log kegagalan ke Telegram..." >&2
         
@@ -64,6 +64,7 @@ function clone_or_download() {
         temp_file=$(mktemp)
 
         echo "Mengunduh file terkompresi..." >&2
+        # Menggunakan curl untuk mengunduh file
         if curl -Ls -o "$temp_file" "$url"; then
              echo "File berhasil diunduh." >&2
         else
@@ -91,7 +92,8 @@ function clone_or_download() {
             echo "Mengkloning branch: $branch" >&2
         fi
         
-        git clone $clone_options "$url" "$target_dir" || finerr
+        # Tambahkan --depth=1 untuk mempercepat kloning (opsional, tapi disarankan)
+        git clone --depth=1 $clone_options "$url" "$target_dir" || finerr
 
     else
         echo "Error: URL tidak dikenali sebagai repositori Git atau file terkompresi yang didukung (tar.gz, tgz, zip, tar): $url" >&2
@@ -108,7 +110,8 @@ function download_kernel_tools() {
     echo "================================================"
 
     # 1. Download/Kloning Kernel Source
-    if [ ! -d "$KERNEL_ROOTDIR" ] || [ ! -d "$KERNEL_ROOTDIR/.git" ]; then
+    # Perbaikan: Hanya cek keberadaan direktori, karena kloning git --depth=1 tidak selalu menyertakan .git/
+    if [ ! -d "$KERNEL_ROOTDIR" ] || [ ! -f "$KERNEL_ROOTDIR/Makefile" ]; then
         if [ ! -z "$KERNEL_SOURCE_URL" ]; then
             echo "Kernel Source tidak ditemukan di $KERNEL_ROOTDIR, mengunduh dari $KERNEL_SOURCE_URL..."
             rm -rf "$KERNEL_ROOTDIR"
@@ -199,6 +202,7 @@ function setup_kernel_patches() {
         if [ -n "$COCCI_REPO_URL" ]; then
             echo "Mengkloning repositori Cocci dari $COCCI_REPO_URL ke $COCCI_SCRIPT_DIR..."
             rm -rf "$COCCI_SCRIPT_DIR"
+            # Kloning Cocci (tidak perlu branch, depth 1 saja)
             clone_or_download "$COCCI_REPO_URL" "$COCCI_SCRIPT_DIR" "Cocci Repo"
         else
             if [[ "$COCCI_ENABLE" == "true" ]]; then
@@ -210,14 +214,21 @@ function setup_kernel_patches() {
         # Kunci: nongki.txt harus berada di root kernel source ($KERNEL_ROOTDIR)
         cd "$KERNEL_ROOTDIR"
         
-        local VERSION=$(grep -E '^VERSION = ' Makefile | awk '{print $3}')
-        local PATCHLEVEL=$(grep -E '^PATCHLEVEL = ' Makefile | awk '{print $3}')
+        # Memastikan file Makefile ada sebelum di-grep
+        if [ ! -f "Makefile" ]; then
+            echo "Error: Makefile tidak ditemukan di $KERNEL_ROOTDIR. Tidak dapat menentukan versi kernel." >&2
+            finerr
+        fi
+
+        local VERSION=$(grep -E '^VERSION = ' Makefile | awk '{print $3}' || echo 0)
+        local PATCHLEVEL=$(grep -E '^PATCHLEVEL = ' Makefile | awk '{print $3}' || echo 0)
         
+        # Logika: Kernel v5.10 ke atas dianggap GKI-compatible, di bawahnya Non-GKI.
         if [ "$VERSION" -lt 5 ] || ([ "$VERSION" -eq 5 ] && [ "$PATCHLEVEL" -lt 10 ]); then
             echo "Kernel terdeteksi non-GKI (v$VERSION.$PATCHLEVEL). Membuat nongki.txt di $KERNEL_ROOTDIR..."
             touch nongki.txt
         else
-            echo "Kernel terdeteksi GKI-compatible atau lebih baru. Melewati pembuatan nongki.txt."
+            echo "Kernel terdeteksi GKI-compatible atau lebih baru (v$VERSION.$PATCHLEVEL). Melewati pembuatan nongki.txt."
             # Pastikan file tidak ada jika kernel GKI
             rm -f nongki.txt
         fi
@@ -233,7 +244,9 @@ function setup_toolchain_env() {
     export KBUILD_BUILD_HOST="${BUILD_HOST:-CirrusCI}"
     
     if [ -d "$CLANG_ROOTDIR" ] && [ -f "$CLANG_ROOTDIR/bin/clang" ]; then
+        # Mengambil versi clang
         CLANG_VER="$("$CLANG_ROOTDIR"/bin/clang --version | head -n 1 | perl -pe 's/\(http.*?\)//gs' | sed -e 's/  */ /g' -e 's/[[:space:]]*$//')"
+        # Mengambil versi LLD
         LLD_VER="$("$CLANG_ROOTDIR"/bin/ld.lld --version | head -n 1)" 
         
         export KBUILD_COMPILER_STRING="$CLANG_VER with $LLD_VER"
@@ -279,7 +292,9 @@ function compile() {
     
     # 1. KONFIGURASI DEFCONFIG AWAL
     echo "Membuat defconfig awal..."
-    make -j$(nproc) O="$KERNEL_OUTDIR" ARCH="$ARCH" "$DEVICE_DEFCONFIG" || finerr
+    # Perbaikan: Tambahkan PATH Clang agar make defconfig dapat menemukan compiler
+    local PATH_CLANG="$CLANG_ROOTDIR/bin:$PATH"
+    (export PATH="$PATH_CLANG"; make -j$(nproc) O="$KERNEL_OUTDIR" ARCH="$ARCH" "$DEVICE_DEFCONFIG") || finerr
     
     # --- START Blok Conditional KSU Integration (MENYESUAIKAN action.yml) ---
     
@@ -311,13 +326,11 @@ function compile() {
                 
                 # Deteksi format URL
                 if [[ "$KSU_OTHER_URL" =~ ^https://github.com/ ]]; then
-                    # Kasus 1: Link GIT Biasa (e.g., https://github.com/SukiSU-Ultra/SukiSU-Ultra)
-                    # Pola RAW: URL_BASE/raw/branch/path
+                    # Kasus 1: Link GIT Biasa
                     KSU_SETUP_URL="${KSU_OTHER_URL}/raw/${KSU_VERSION}/kernel/setup.sh"
                     echo "Format URL terdeteksi: GitHub Repository."
                 elif [[ "$KSU_OTHER_URL" =~ ^https://raw.githubusercontent.com/ ]]; then
-                    # Kasus 2: Link RAW (e.g., https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra)
-                    # Pola RAW: URL_BASE/branch/path (tidak perlu /raw/ lagi)
+                    # Kasus 2: Link RAW
                     KSU_SETUP_URL="${KSU_OTHER_URL}/${KSU_VERSION}/kernel/setup.sh"
                     echo "Format URL terdeteksi: GitHub Raw Content."
                 else
@@ -326,7 +339,7 @@ function compile() {
                 fi
 
                 echo "Mengunduh setup.sh dari: $KSU_SETUP_URL"
-                curl -SsL "$KSU_SETUP_URL" | bash -s "$KSU_VERSION" || finerr
+                curl -SsL "$KSU_SETUP_URL" | bash -s "$KVER" || finerr
                 
             else 
                 # Logika KernelSU Resmi
@@ -337,14 +350,15 @@ function compile() {
         
         # 2. LOGIKA KSU LKM dan APPLY_COCCI.SH (Mengikuti alur action.yml)
         
-        local DEFCONFIG_PATH="arch/$ARCH/configs/$DEVICE_DEFCONFIG"
+        local DEFCONFIG_PATH="$KERNEL_OUTDIR/.config" # Menggunakan .config di OUTDIR
         
         if [[ "$KSU_LKM_ENABLE" == "true" ]]; then
-            # KASUS A: LKM AKTIF (Modifikasi di defconfig)
+            # KASUS A: LKM AKTIF (Modifikasi di .config)
             echo "Mengaktifkan KernelSU sebagai LKM (Loadable Kernel Module)."
             
+            # Gunakan sed pada .config, bukan defconfig asli
             if grep -q "CONFIG_KPROBES=y" "$DEFCONFIG_PATH" ; then
-                # Jika KPROBES di defconfig aktif, ganti KSU=y ke KSU=m di defconfig
+                # Jika KPROBES aktif di .config, ganti KSU=y ke KSU=m
                 sed -i 's/CONFIG_KSU=y/CONFIG_KSU=m/g' "$DEFCONFIG_PATH"
                 echo "CONFIG_KSU diubah menjadi 'm' di $DEFCONFIG_PATH."
             else
@@ -379,7 +393,7 @@ function compile() {
         
         # 3. SINKRONISASI KONFIGURASI 
         echo "Mensinkronkan konfigurasi (olddefconfig) untuk menerapkan perubahan KSU/LKM."
-        make -j$(nproc) O="$KERNEL_OUTDIR" ARCH="$ARCH" olddefconfig || finerr 
+        (export PATH="$PATH_CLANG"; make -j$(nproc) O="$KERNEL_OUTDIR" ARCH="$ARCH" olddefconfig) || finerr 
         
     else
         echo "================================================"
@@ -401,11 +415,13 @@ function compile() {
         CC_PREFIX="aarch64-linux-gnu-"
         CC32_PREFIX="arm-linux-gnueabi-"
     else
+        # Default fallback jika ARCH bukan arm64 (meskipun jarang)
         CC_PREFIX="aarch64-linux-gnu-"
         CC32_PREFIX="arm-linux-gnueabi-"
     fi
 
     # Target make Image.gz
+    # Perbaikan: Menambahkan CROSS_COMPILE_COMPAT untuk Arm32
     make -j$(nproc) ARCH="$ARCH" O="$KERNEL_OUTDIR" \
         LLVM="1" \
         LLVM_IAS="1" \
@@ -424,6 +440,7 @@ function compile() {
         HOSTLD="ld.lld" \
         CROSS_COMPILE="$CC_PREFIX" \
         CROSS_COMPILE_ARM32="$CC32_PREFIX" \
+        CROSS_COMPILE_COMPAT="$CC32_PREFIX" \
         Image.gz || finerr 
         
     if ! [ -a "$IMAGE" ]; then
@@ -442,22 +459,28 @@ function compile() {
 function get_info() {
     cd "$KERNEL_ROOTDIR"
     
-    export KERNEL_VERSION=$(grep 'Linux/arm64' "$KERNEL_ROOTDIR/.config" | cut -d " " -f3 || echo "N/A")
+    # PERBAIKAN: Menggunakan .config di KERNEL_OUTDIR
+    export KERNEL_VERSION=$(grep 'Linux/arm64' "$KERNEL_OUTDIR/.config" | cut -d " " -f3 || echo "N/A")
+    # UTS_VERSION akan ada setelah make Image.gz berhasil
     export UTS_VERSION=$(grep 'UTS_VERSION' "$KERNEL_ROOTDIR/include/generated/compile.h" | cut -d '"' -f2 || echo "N/A")
     
     if [ -d "$KERNEL_ROOTDIR/.git" ]; then
-        export LATEST_COMMIT="$(git log --pretty=format:'%s' -1 || echo "N/A")"
-        export COMMIT_BY="$(git log --pretty=format:'by %an' -1 || echo "N/A")"
+        # Menggunakan format yang lebih ringkas untuk commit dan memastikan output aman
+        export LATEST_COMMIT="$(git log --pretty=format:'%s' -1 | head -n 1 || echo "N/A")"
+        export COMMIT_BY="$(git log --pretty=format:'by %an' -1 | head -n 1 || echo "N/A")"
         
         if [ -n "$KERNEL_BRANCH_TO_CLONE" ]; then
+            # Jika branch dikloning secara eksplisit
             export BRANCH="$KERNEL_BRANCH_TO_CLONE (Cloned)"
         else
+            # Jika menggunakan HEAD dari repo
             export BRANCH="$(git rev-parse --abbrev-ref HEAD || echo "N/A")"
         fi
 
         export KERNEL_SOURCE="${CIRRUS_REPO_OWNER}/${CIRRUS_REPO_NAME}" 
         export KERNEL_BRANCH="$BRANCH"
     else
+        # Logika N/A untuk source code yang diunduh (bukan git clone)
         export LATEST_COMMIT="Source Code Downloaded (No Git Info)"
         export COMMIT_BY="N/A"
         export BRANCH="N/A"
@@ -500,7 +523,7 @@ function push() {
         # Cek status patching untuk pesan di Telegram
         if [ -f "$KERNEL_ROOTDIR/nongki.txt" ]; then
              KSU_STATUS="$KSU_STATUS, Non-GKI: Aktif"
-             local DEFCONFIG_PATH="arch/$ARCH/configs/$DEVICE_DEFCONFIG"
+             local DEFCONFIG_PATH="$KERNEL_OUTDIR/.config"
              if grep -q "CONFIG_KPROBES=y" "$DEFCONFIG_PATH"; then
                  KSU_STATUS="$KSU_STATUS (KPROBES Aktif, Patch/Cocci Dilewati)"
              elif [[ "$KSU_SKIP_PATCH" == "true" ]]; then
@@ -520,7 +543,8 @@ function push() {
     if [[ "$KERNEL_SOURCE" != "N/A" && "$KERNEL_BRANCH" != "N/A" ]]; then
         local GIT_BRANCH_NAME="$BRANCH"
         if [[ "$BRANCH" == *"(Cloned)"* ]]; then
-            GIT_BRANCH_NAME="$KERNEL_BRANCH_TO_CLONE"
+            # Hilangkan "(Cloned)" untuk URL
+            GIT_BRANCH_NAME="${KERNEL_BRANCH_TO_CLONE}"
         fi
         
         CHANGES_LINK_TEXT="<a href=\"https://github.com/$KERNEL_SOURCE/commits/$GIT_BRANCH_NAME\">Here</a>"
