@@ -182,6 +182,7 @@ function setup_env() {
     export KSU_VERSION="${KSU_VERSION:-main}"        
     export KSU_LKM_ENABLE="${KSU_LKM_ENABLE:-false}" 
     export KSU_OTHER_ENABLE="${KSU_OTHER_ENABLE:-false}" 
+    export KSU_EXPERIMENTAL="${KSU_EXPERIMENTAL:-false}"
     export KSU_OTHER_URL="${KSU_OTHER_URL:-https://raw.githubusercontent.com/tiann/KernelSU}" 
     export KSU_SKIP_PATCH="${KSU_SKIP_PATCH:-true}"
     export COCCI_ENABLE="${COCCI_ENABLE:-true}" 
@@ -338,8 +339,11 @@ function compile() {
                     finerr
                 fi
 
-                echo "Mengunduh setup.sh dari: $KSU_SETUP_URL"
-                curl -SsL "$KSU_SETUP_URL" | bash -s "$KVER" || finerr
+                if [[ "$KSU_EXPERIMENTAL" == "true" ]]; then
+                    curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main || finerr
+                else
+                    curl -SsL "$KSU_SETUP_URL" | bash -s "$KVER" || finerr
+                fi
                 
             else 
                 # Logika KernelSU Resmi
@@ -541,7 +545,7 @@ function push() {
     
     local CHANGES_LINK_TEXT="N/A"
     if [[ "$KERNEL_SOURCE" != "N/A" && "$KERNEL_BRANCH" != "N/A" ]]; then
-        CHANGES_LINK_TEXT="<a href=\"https://github.com/$KERNEL_SOURCE/commits/$KERNEL_BRANCH_TO_CLONE\">Here</a>"
+        CHANGES_LINK_TEXT="<a href=\"$KERNEL_SOURCE/commits/$KERNEL_BRANCH_TO_CLONE\">Here</a>"
     fi
     
     # Kirim dokumen ZIP
