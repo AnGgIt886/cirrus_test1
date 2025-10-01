@@ -184,7 +184,7 @@ function setup_env() {
     export COCCI_ENABLE="${COCCI_ENABLE:-true}" 
     
     # Lokasi script Cocci
-    export COCCI_REPO_URL="${COCCI_REPO_URL:-https://github.com/dabao1955/kernel_build_action}" # URL repositori Cocci
+    export COCCI_REPO_URL="${COCCI_REPO_URL:-https://github.com/dabao1955/kernel_build_action.git}" # URL repositori Cocci
     export COCCI_SCRIPT_DIR="${COCCI_SCRIPT_DIR:-$CIRRUS_WORKING_DIR/cocci}" 
 }
 
@@ -294,30 +294,42 @@ function compile() {
         else
             local KVER="$KSU_VERSION"
             
+            # 1.1 Cek Non-GKI & set KVER (Ini berlaku untuk KernelSU Resmi & Kustom)
+            if [ -f nongki.txt ]; then
+                # Non-GKI: Force KVER ke v0.9.5 (sesuai action.yml)
+                printf "Warning: Kernel dideteksi non-GKI. Versi KernelSU dipaksa ke v0.9.5 (sesuai batasan Non-GKI).\n"
+                KVER=v0.9.5
+            fi
+
             if [[ "$KSU_OTHER_ENABLE" == "true" ]]; then
-                # Logika KernelSU pihak ketiga (Mengikuti action.yml)
+                # Logika KernelSU pihak ketiga (MENDUKUNG GIT & RAW)
+                
+                KVER="$KSU_VERSION" # Tetap gunakan versi kustom untuk curl
                 echo "Menggunakan URL KSU/SukiSU Kustom: $KSU_OTHER_URL, Versi: $KSU_VERSION"
                 
-                local KSU_SETUP_URL="${KSU_OTHER_URL}/raw/${KSU_VERSION}/kernel/setup.sh"
+                local KSU_SETUP_URL
                 
-                curl -SsL "$KSU_SETUP_URL" | bash -s "$KSU_VERSION" || finerr
-                
-            else
-                # Logika KernelSU resmi & Check nongki.txt
-                
-                local VERSION=$(grep -E '^VERSION = ' Makefile | awk '{print $3}')
-                local PATCHLEVEL=$(grep -E '^PATCHLEVEL = ' Makefile | awk '{print $3}')
-
-                echo "Kernel version: $VERSION.$PATCHLEVEL.$SUBLEVEL"
-                
-                if [ -f nongki.txt ]; then
-                    # Non-GKI: Force KVER ke v0.9.5 (sesuai action.yml)
-                    printf "Warning: The KernelSU version you selected was detected to be $KSU_VERSION, but KernelSU has dropped support for the non-gki kernel since 0.9.5. \n This will force switch to v0.9.5.\n"
-                    KVER=v0.9.5
+                # Deteksi format URL
+                if [[ "$KSU_OTHER_URL" =~ ^https://github.com/ ]]; then
+                    # Kasus 1: Link GIT Biasa (e.g., https://github.com/SukiSU-Ultra/SukiSU-Ultra)
+                    # Pola RAW: URL_BASE/raw/branch/path
+                    KSU_SETUP_URL="${KSU_OTHER_URL}/raw/${KSU_VERSION}/kernel/setup.sh"
+                    echo "Format URL terdeteksi: GitHub Repository."
+                elif [[ "$KSU_OTHER_URL" =~ ^https://raw.githubusercontent.com/ ]]; then
+                    # Kasus 2: Link RAW (e.g., https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra)
+                    # Pola RAW: URL_BASE/branch/path (tidak perlu /raw/ lagi)
+                    KSU_SETUP_URL="${KSU_OTHER_URL}/${KSU_VERSION}/kernel/setup.sh"
+                    echo "Format URL terdeteksi: GitHub Raw Content."
                 else
-                    KVER="$KSU_VERSION"
+                    echo "Error: KSU_OTHER_URL tidak dikenal (bukan github.com atau raw.githubusercontent.com)." >&2
+                    finerr
                 fi
 
+                echo "Mengunduh setup.sh dari: $KSU_SETUP_URL"
+                curl -SsL "$KSU_SETUP_URL" | bash -s "$KSU_VERSION" || finerr
+                
+            else 
+                # Logika KernelSU Resmi
                 echo "Mengintegrasikan KernelSU versi: $KVER dari tiann/KernelSU."
                 curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s "$KVER" || finerr
             fi
@@ -548,7 +560,7 @@ function push() {
 setup_env
 download_kernel_tools
 setup_toolchain_env
-setup_kernel_patches # <--- BARU: Menjalankan kloning Cocci & cek nongki.txt
+setup_kernel_patches 
 check
 compile
 get_info 

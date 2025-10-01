@@ -46,9 +46,6 @@ task:
     cpu: 8
     memory: 32G
 
-  Setup_script:
-    - apt install coccinelle -y
-
   Build_kernel_script:
     - ./build.sh
     - ./done.sh
