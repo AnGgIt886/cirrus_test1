@@ -35,7 +35,11 @@ function finerr() {
             -F chat_id="$TG_CHAT_ID" \
             -F "disable_web_page_preview=true" \
             -F "parse_mode=html" \
-            -F caption="==============================%0A<b>    Building Kernel CLANG Failed [❌]</b>%0A<b>        Jiancong Tenan 🤬</b>%0A=============================="
+            -F caption="
+==============================
+<b>    Building Kernel CLANG Failed [❌]</b>
+<b>        Jiancog Tenan 🤬</b>
+=============================="
         
     else
         echo "Gagal mengambil log dari Cirrus CI. Mengirim pesan error tanpa file log." >&2
@@ -169,7 +173,8 @@ function setup_env() {
     export KERNEL_OUTDIR="$KERNEL_ROOTDIR/out"
 
     # Variabel lain
-    export IMAGE="$KERNEL_OUTDIR/arch/$ARCH/boot/Image.gz" 
+    export IMAGE="$KERNEL_OUTDIR/arch/$ARCH/boot/Image.gz"
+    export DTBO="$KERNEL_OUTDIR/arch/$ARCH/boot/dtbo.img"
     export DATE=$(date +"%Y%m%d-%H%M%S") 
     export BOT_MSG_URL="https://api.telegram.org/bot$TG_TOKEN/sendMessage"
     export BOT_DOC_URL="https://api.telegram.org/bot$TG_TOKEN/sendDocument"
@@ -456,7 +461,7 @@ function compile() {
     ANYKERNEL_DIR="$CIRRUS_WORKING_DIR/AnyKernel"
     rm -rf "$ANYKERNEL_DIR" 
 	git clone --depth=1 "$ANYKERNEL" "$ANYKERNEL_DIR" || finerr
-	cp "$IMAGE" "$ANYKERNEL_DIR/Image" || finerr
+	cp "$IMAGE" "$DTBO" "$ANYKERNEL_DIR" || finerr
 }
 
 # Mendapatkan informasi commit dan kernel
@@ -471,6 +476,7 @@ function get_info() {
     if [ -d "$KERNEL_ROOTDIR/.git" ]; then
         # Menggunakan format yang lebih ringkas untuk commit dan memastikan output aman
         export LATEST_COMMIT="$(git log --pretty=format:'%s' -1 | head -n 1 || echo "N/A")"
+        export COMMIT_CHANGE="$(git log --pretty=format:'%H' -1 | head -n 1 || echo "N/A")"
         export COMMIT_BY="$(git log --pretty=format:'by %an' -1 | head -n 1 || echo "N/A")"
         
         if [ -n "$KERNEL_BRANCH_TO_CLONE" ]; then
@@ -486,6 +492,7 @@ function get_info() {
     else
         # Logika N/A untuk source code yang diunduh (bukan git clone)
         export LATEST_COMMIT="Source Code Downloaded (No Git Info)"
+        export COMMIT_CHANGE="N/A"
         export COMMIT_BY="N/A"
         export BRANCH="N/A"
         export KERNEL_SOURCE="N/A"
@@ -545,7 +552,7 @@ function push() {
     
     local CHANGES_LINK_TEXT="N/A"
     if [[ "$KERNEL_SOURCE" != "N/A" && "$KERNEL_BRANCH" != "N/A" ]]; then
-        CHANGES_LINK_TEXT="<a href=\"$KERNEL_SOURCE/commits/$KERNEL_BRANCH_TO_CLONE\">Here</a>"
+        CHANGES_LINK_TEXT="<a href=\"$KERNEL_SOURCE/commit/$COMMIT_CHANGE\">Here</a>"
     fi
     
     # Kirim dokumen ZIP
@@ -556,6 +563,7 @@ function push() {
         -F caption="
 ==========================
 <b>✅ Build Finished!</b>
+
 <b>📦 Kernel:</b> $KERNEL_NAME
 <b>📱 Device:</b> $DEVICE_CODENAME
 <b>👤 Owner:</b> $CIRRUS_REPO_OWNER
