@@ -181,6 +181,11 @@ function setup_env() {
     export BOT_MSG_URL="https://api.telegram.org/bot${TG_TOKEN}/sendMessage"
     export BOT_DOC_URL="https://api.telegram.org/bot${TG_TOKEN}/sendDocument"
 
+    # Variabel kompilator tambahan (Diperlukan untuk perbaikan sintaksis)
+    export USE_COMPILER_DEFAULT="${USE_COMPILER_DEFAULT:-true}"
+    export USE_COMPILER_EXTRA="${USE_COMPILER_EXTRA:-}"
+    export BUILD_TYPE="${BUILD_TYPE:-1}" # 1: Image.gz dtbo.img, 2: Image.gz, auto: Image.gz dtbo.img
+
     # Menyimpan waktu mulai
     export START=$(date +"%s")
     
@@ -417,37 +422,40 @@ function compile() {
         echo "Peringatan: ARCH bukan arm64. Menggunakan default aarch64/arm32 toolchain prefix." >&2
     fi
 
+    # 4a. Tentukan variabel kompiler (Compiler Arguments)
+    local COMPILER_ARGS=""
+    
+    if [[ "${USE_COMPILER_DEFAULT}" == "true" ]]; then
+        # Mengatur variabel kompiler secara eksplisit (Clang dan LLVM tools)
+        COMPILER_ARGS="CC=clang AR=llvm-ar AS=llvm-as LD=ld.lld NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump OBJSIZE=llvm-size READELF=llvm-readelf STRIP=llvm-strip HOSTCC=clang HOSTCXX=clang++ HOSTLD=ld.lld"
+    elif [[ -n "${USE_COMPILER_EXTRA}" ]]; then
+        # Menggunakan variabel tambahan yang disediakan (untuk compiler/toolset kustom)
+        COMPILER_ARGS="${USE_COMPILER_EXTRA}"
+    fi
+
+    # 4b. Tentukan target make (Build Targets)
+    local BUILD_TARGETS=""
+    
+    if [[ "${BUILD_TYPE}" == "1" ]]; then
+        BUILD_TARGETS="Image.gz dtbo.img"
+    elif [[ "${BUILD_TYPE}" == "2" ]]; then
+        BUILD_TARGETS="Image.gz"
+    elif [[ "${BUILD_TYPE}" == "auto" ]]; then
+        BUILD_TARGETS="Image.gz dtbo.img" # Asumsi default "auto" adalah build penuh
+    fi
+    
     # Target make Image.gz dan dtbo.img
-    make -j$(nproc) ARCH="${ARCH}" O="${KERNEL_OUTDIR}" \
+    # Semua variabel dan target sekarang dioperasikan sebagai string tunggal setelah substitusi shell
+    (export PATH="${PATH}"; 
+     make -j$(nproc) ARCH="${ARCH}" O="${KERNEL_OUTDIR}" \
         LLVM="1" \
         LLVM_IAS="1" \
-        if [[ "${USE_COMPILER_DEFAULT}" == "true" ]]; then
-            CC="clang" \
-            AR="llvm-ar" \
-            AS="llvm-as" \
-            LD="ld.lld" \
-            NM="llvm-nm" \
-            OBJCOPY="llvm-objcopy" \
-            OBJDUMP="llvm-objdump" \
-            OBJSIZE="llvm-size" \
-            READELF="llvm-readelf" \
-            STRIP="llvm-strip" \
-            HOSTCC="clang" \
-            HOSTCXX="clang++" \
-            HOSTLD="ld.lld" \
-        elif [[ "${USE_COMPILER_DEFAULT}" != "true" ]]; then
-            "${USE_COMPILER_EXTRA}"
-        fi
+        ${COMPILER_ARGS} \
         CROSS_COMPILE="${CC_PREFIX}" \
         CROSS_COMPILE_ARM32="${CC32_PREFIX}" \
         CROSS_COMPILE_COMPAT="${CC32_PREFIX}" \
-        if [[ "${BUILD_TYPE}" == "1" ]]; then
-            Image.gz dtbo.img || finerr
-        elif [[ "${BUILD_TYPE}" == "2" ]]; then
-            Image.gz || finerr
-        else [[ "${BUILD_TYPE}" == "auto" ]]; then
-            || finerr
-        fi
+        ${BUILD_TARGETS} \
+        || finerr)
         
     if [[ ! -f "${IMAGE}" ]]; then
 	    echo "Error: Image.gz tidak ditemukan setelah kompilasi." >&2
