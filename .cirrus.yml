@@ -40,6 +40,15 @@ env:
   # KSU EXPERIMENTAL
   KSU_EXPERIMENTAL: false
   
+  # BUILD TYPE
+  # CC="clang" dan lain lain
+  # Jika set ke false anda perlu menggunakan USE_COMPILER_EXTRA
+  USE_COMPILER_DEFAULT: true
+  # contoh CC="clang" AR="llvm-ar" AS="llvm-as" LD="ld.lld" NM="llvm-nm" OBJCOPY="llvm-objcopy" OBJDUMP="llvm-objdump" OBJSIZE="llvm-size" READELF="llvm-readelf" STRIP="llvm-strip" HOSTCC="clang" HOSTCXX="clang++" HOSTLD="ld.lld"
+  USE_COMPILER_EXTRA:
+  # (1= image.gz dan dtbo.img) (2= image.gz saja) (auto= otomatis)
+  BUILD_TYPE: 1
+  
   # Telegram
   TG_TOKEN: ENCRYPTED[d0276edb784fa8b652def34d72880b4851940c542e7359f5f4bf2fd580c50a2703fd253d507dbae7707b26f9c97a6062]
   TG_CHAT_ID: ENCRYPTED[4d5930d962ad8511a049ebea4a7592106705ad09d8471be9b3071ee337381d2f31c1a9a53040eeb582842361f6ec1417]

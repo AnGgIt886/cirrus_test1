@@ -421,23 +421,33 @@ function compile() {
     make -j$(nproc) ARCH="${ARCH}" O="${KERNEL_OUTDIR}" \
         LLVM="1" \
         LLVM_IAS="1" \
-        CC="clang" \
-        AR="llvm-ar" \
-        AS="llvm-as" \
-        LD="ld.lld" \
-        NM="llvm-nm" \
-        OBJCOPY="llvm-objcopy" \
-        OBJDUMP="llvm-objdump" \
-        OBJSIZE="llvm-size" \
-        READELF="llvm-readelf" \
-        STRIP="llvm-strip" \
-        HOSTCC="clang" \
-        HOSTCXX="clang++" \
-        HOSTLD="ld.lld" \
+        if [[ "${USE_COMPILER_DEFAULT}" == "true" ]]; then
+            CC="clang" \
+            AR="llvm-ar" \
+            AS="llvm-as" \
+            LD="ld.lld" \
+            NM="llvm-nm" \
+            OBJCOPY="llvm-objcopy" \
+            OBJDUMP="llvm-objdump" \
+            OBJSIZE="llvm-size" \
+            READELF="llvm-readelf" \
+            STRIP="llvm-strip" \
+            HOSTCC="clang" \
+            HOSTCXX="clang++" \
+            HOSTLD="ld.lld" \
+        elif [[ "${USE_COMPILER_DEFAULT}" != "true" ]]; then
+            "${USE_COMPILER_EXTRA}"
+        fi
         CROSS_COMPILE="${CC_PREFIX}" \
         CROSS_COMPILE_ARM32="${CC32_PREFIX}" \
         CROSS_COMPILE_COMPAT="${CC32_PREFIX}" \
-        Image.gz dtbo.img || finerr 
+        if [[ "${BUILD_TYPE}" == "1" ]]; then
+            Image.gz dtbo.img || finerr
+        elif [[ "${BUILD_TYPE}" == "2" ]]; then
+            Image.gz || finerr
+        else [[ "${BUILD_TYPE}" == "auto" ]]; then
+            || finerr
+        fi
         
     if [[ ! -f "${IMAGE}" ]]; then
 	    echo "Error: Image.gz tidak ditemukan setelah kompilasi." >&2
