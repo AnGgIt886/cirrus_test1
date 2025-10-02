@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 #
-# Script Pembangunan Kernel (Dioptimalkan)
-# Diadaptasi untuk Cirrus CI dengan Logika KernelSU Mirip GitHub Action (Mandiri).
 #
 # Keluar segera jika ada perintah yang gagal, variabel yang tidak diset, atau pipe yang gagal.
 set -euo pipefail
@@ -23,14 +21,16 @@ tg_post_msg() {
 # Fungsi untuk menangani kegagalan (find error)
 function finerr() {
     # Pastikan fungsi ini tidak terpengaruh oleh 'set -e' internal
+    set +e
     local LOG_FILE="build.log"
     local LOG_URL="https://api.cirrus-ci.com/v1/task/${CIRRUS_TASK_ID}/logs/Build_kernel.log"
     local TG_MSG
-
+    
+    # Menangkap pesan log dari stdout/stderr sebelum exit, jika ada
     echo "Pembangunan GAGAL. Mencoba mengambil log dari ${LOG_URL}..." >&2
 
     # Ambil log menggunakan curl (Gunakan -f untuk mencegah curl menampilkan output error HTTP)
-    if curl -Ls -o "${LOG_FILE}" "${LOG_URL}"; then
+    if curl -Ls -f -o "${LOG_FILE}" "${LOG_URL}"; then
         echo "Log berhasil diambil. Mengirim log kegagalan ke Telegram..." >&2
 
         # Kirim dokumen log
@@ -42,11 +42,12 @@ function finerr() {
 ==============================
 <b>    Building Kernel CLANG Failed [❌]</b>
 <b>        Jiancog Tenan 🤬</b>
-==============================" || echo "Gagal mengirim dokumen log." >&2 # Tambahkan error handling untuk curl
+==============================" || echo "Gagal mengirim dokumen log." >&2 
 
     else
-        echo "Gagal mengambil log dari Cirrus CI." >&2
-        TG_MSG="<b>Pembangunan Kernel Gagal [❌]</b>%0A<b>Kesalahan:</b> Gagal mendapatkan log dari Cirrus CI. Silakan cek Cirrus secara manual: <a href=\"https://cirrus-ci.com/task/${CIRRUS_TASK_ID}\">Task ID ${CIRRUS_TASK_ID}</a>"
+        echo "Gagal mengambil log dari Cirrus CI. Cek URL manual." >&2
+        # Gunakan printf untuk format string yang lebih andal
+        printf -v TG_MSG "<b>Pembangunan Kernel Gagal [❌]</b>\n<b>Kesalahan:</b> Gagal mendapatkan log dari Cirrus CI. Silakan cek Cirrus secara manual: <a href=\"https://cirrus-ci.com/task/%s\">Task ID %s</a>" "${CIRRUS_TASK_ID}" "${CIRRUS_TASK_ID}"
         tg_post_msg "${TG_MSG}" || echo "Gagal mengirim pesan error." >&2
     fi
 
@@ -81,11 +82,18 @@ function clone_or_download() {
         mkdir -p "${target_dir}"
         
         echo "Mengekstrak file..." >&2
-        if [[ "${url}" =~ \.(tar\.gz|tgz|tar)$ ]]; then
-            tar -xf "${temp_file}" -C "${target_dir}" --strip-components=1 || finerr
-        elif [[ "${url}" =~ \.zip$ ]]; then
-            unzip -q "${temp_file}" -d "${target_dir}" || finerr
-        fi
+        # Menggunakan case yang lebih rapi untuk deteksi tipe kompresi
+        case "${url}" in
+            *.tar.gz|*.tgz|*.tar)
+                tar -xf "${temp_file}" -C "${target_dir}" --strip-components=1 || finerr
+                ;;
+            *.zip)
+                unzip -q "${temp_file}" -d "${target_dir}" || finerr
+                ;;
+            *)
+                echo "Error internal: Tipe file terkompresi tidak didukung: ${url}" >&2; finerr
+                ;;
+        esac
 
         rm -f "${temp_file}"
     
@@ -103,7 +111,7 @@ function clone_or_download() {
         git clone --depth=1 ${clone_options} "${url}" "${target_dir}" || finerr
 
     else
-        echo "Error: URL tidak dikenali sebagai repositori Git atau file terkompresi yang didukung (tar.gz, tgz, zip, tar): ${url}" >&2
+        echo "Error: URL tidak dikenali sebagai repositori Git atau file terkompresi yang didukung: ${url}" >&2
         finerr
     fi
     
@@ -115,12 +123,15 @@ function download_kernel_tools() {
     echo "================================================"
     echo "       Memeriksa dan Mengunduh Dependensi"
     echo "================================================"
+    
+    local download_needed=0 # Flag untuk cek apakah ada yang diunduh
 
     # 1. Download/Kloning Kernel Source
     if [[ ! -d "${KERNEL_ROOTDIR}" ]] || [[ ! -f "${KERNEL_ROOTDIR}/Makefile" ]]; then
         if [[ -n "${KERNEL_SOURCE_URL}" ]]; then
             echo "Kernel Source tidak ditemukan di ${KERNEL_ROOTDIR}, mengunduh..."
             clone_or_download "${KERNEL_SOURCE_URL}" "${KERNEL_ROOTDIR}" "Kernel Source" "${KERNEL_BRANCH_TO_CLONE}"
+            download_needed=1
         else
             echo "Error: Kernel Source tidak ditemukan di ${KERNEL_ROOTDIR} dan KERNEL_SOURCE_URL tidak diatur." >&2
             exit 1
@@ -134,6 +145,7 @@ function download_kernel_tools() {
         if [[ -n "${CLANG_URL}" ]]; then
             echo "Toolchain (Clang) tidak ditemukan di ${CLANG_ROOTDIR}, mengunduh..."
             clone_or_download "${CLANG_URL}" "${CLANG_ROOTDIR}" "Clang Toolchain" "${CLANG_BRANCH_TO_CLONE}" 
+            download_needed=1
         else
             echo "Error: Toolchain (Clang) tidak ditemukan di ${CLANG_ROOTDIR} dan CLANG_URL tidak diatur." >&2
             exit 1
@@ -142,12 +154,17 @@ function download_kernel_tools() {
         echo "Toolchain (Clang) ditemukan. Dilewati."
     fi
     
+    # Cek sekali lagi apakah ada git yang perlu diinstal jika ada kloning baru (tergantung lingkungan CI)
+    if [[ "${download_needed}" -eq 1 ]]; then
+        echo "Dependensi berhasil disiapkan."
+    fi
+    
     echo "================================================"
 }
 
 # Mengatur variabel lingkungan dasar (Dioptimalkan)
 function setup_env() {
-    # Cek variabel wajib (menggunakan :? yang di-enforce oleh set -u)
+    # Cek variabel wajib menggunakan :?
     : "${CIRRUS_WORKING_DIR:?}"
     : "${DEVICE_CODENAME:?}"
     : "${TG_TOKEN:?}"
@@ -164,7 +181,7 @@ function setup_env() {
     # --- Core Build Variables ---
     export ARCH="${ARCH:-arm64}" 
     export CONFIG="${CONFIG:-bengal-perf_defconfig}" 
-    export KERNEL_NAME="${KERNEL_NAME:-mrt-Kernel}" # Default ditambahkan
+    export KERNEL_NAME="${KERNEL_NAME:-mrt-Kernel}" 
     
     # Atur path relatif ke CIRRUS_WORKING_DIR
     export CLANG_DIR="${CLANG_DIR:-${CIRRUS_WORKING_DIR}/greenforce-clang}" 
@@ -190,6 +207,7 @@ function setup_env() {
     export KSU_LKM_ENABLE="${KSU_LKM_ENABLE:-false}" 
     export KSU_OTHER_ENABLE="${KSU_OTHER_ENABLE:-false}" 
     export KSU_EXPERIMENTAL="${KSU_EXPERIMENTAL:-false}"
+    # Gunakan KSU_OTHER_URL yang lebih netral jika default, tapi tetap perlu set default
     export KSU_OTHER_URL="${KSU_OTHER_URL:-https://raw.githubusercontent.com/tiann/KernelSU}" 
     export KSU_SKIP_PATCH="${KSU_SKIP_PATCH:-true}"
     export COCCI_ENABLE="${COCCI_ENABLE:-true}" 
@@ -208,12 +226,14 @@ function setup_kernel_patches() {
     echo "================================================"
 
     # 1. Kloning Repositori Cocci
-    if [[ -n "${COCCI_REPO_URL}" ]] && [[ "${COCCI_ENABLE}" == "true" ]]; then
-        echo "Mengkloning repositori Cocci..."
-        rm -rf "${COCCI_SCRIPT_DIR}"
-        clone_or_download "${COCCI_REPO_URL}" "${COCCI_SCRIPT_DIR}" "Cocci Repo"
-    elif [[ "${COCCI_ENABLE}" == "true" ]]; then
-        echo "Peringatan: COCCI_ENABLE=true, tetapi COCCI_REPO_URL tidak diatur. Melewati kloning Cocci."
+    if [[ "${COCCI_ENABLE}" == "true" ]]; then
+        if [[ -n "${COCCI_REPO_URL}" ]]; then
+            echo "Mengkloning repositori Cocci..."
+            rm -rf "${COCCI_SCRIPT_DIR}"
+            clone_or_download "${COCCI_REPO_URL}" "${COCCI_SCRIPT_DIR}" "Cocci Repo"
+        else
+            echo "Peringatan: COCCI_ENABLE=true, tetapi COCCI_REPO_URL tidak diatur. Melewati kloning Cocci."
+        fi
     fi
 
     # 2. Deteksi dan Buat nongki.txt (Non-GKI check)
@@ -222,11 +242,25 @@ function setup_kernel_patches() {
         finerr
     fi
 
+    # Subshell untuk menjaga direktori kerja dan set -e
     (
+        set +e # Nonaktifkan set -e untuk grep/awk opsional
         cd "${KERNEL_ROOTDIR}"
-        local VERSION=$(grep -E '^VERSION = ' Makefile | awk '{print $3}' || echo 0)
-        local PATCHLEVEL=$(grep -E '^PATCHLEVEL = ' Makefile | awk '{print $3}' || echo 0)
-
+        
+        # Pengambilan versi kernel yang lebih ringkas dan kuat (menggunakan Bash read dan regex)
+        local VERSION=0
+        local PATCHLEVEL=0
+        
+        # Ambil VERSION dan PATCHLEVEL dari Makefile
+        if grep -E '^(VERSION|PATCHLEVEL) = ' Makefile | while read -r KEY EQ VAL; do 
+            case "$KEY" in
+                VERSION) VERSION="$VAL" ;;
+                PATCHLEVEL) PATCHLEVEL="$VAL" ;;
+            esac
+        done; then
+            : # Lanjutkan
+        fi
+        
         # Logika: Kernel v5.10 ke atas dianggap GKI-compatible, di bawahnya Non-GKI.
         if [[ "${VERSION}" -lt 5 ]] || ( [[ "${VERSION}" -eq 5 ]] && [[ "${PATCHLEVEL}" -lt 10 ]] ); then
             echo "Kernel terdeteksi non-GKI (v${VERSION}.${PATCHLEVEL}). Membuat nongki.txt..."
@@ -235,31 +269,29 @@ function setup_kernel_patches() {
             echo "Kernel terdeteksi GKI-compatible atau lebih baru (v${VERSION}.${PATCHLEVEL}). Melewati pembuatan nongki.txt."
             rm -f nongki.txt
         fi
-    ) # Subshell untuk menjaga direktori kerja
+    )
+    echo "KernelSU setup patching/Non-GKI check selesai."
 }
 
 # Fungsi untuk mengatur variabel toolchain setelah diunduh
 function setup_toolchain_env() {
+    # Set default
     export KBUILD_BUILD_USER="${BUILD_USER:-Unknown User}"
     export KBUILD_BUILD_HOST="${BUILD_HOST:-CirrusCI}"
-    export KBUILD_COMPILER_STRING="Toolchain Not Found" # Default aman
+    export KBUILD_COMPILER_STRING="Toolchain Not Found" 
 
     if [[ -d "${CLANG_ROOTDIR}" ]] && [[ -f "${CLANG_ROOTDIR}/bin/clang" ]]; then
-        # Mengambil versi clang dan lld (memanfaatkan subshell untuk clean execution)
-        local CLANG_VER LLD_VER
+        # Mengambil versi clang dan lld (lebih efisien dengan meminimalisir pipe)
+        local CLANG_VER
+        local LLD_VER
         
-        CLANG_VER=$( \
-            "${CLANG_ROOTDIR}/bin/clang" --version 2>/dev/null | \
-            head -n 1 | \
-            sed -E 's/\(http.*?\)//g' | \
-            sed -E 's/  */ /g' | \
-            sed -E 's/^[[:space:]]*//;s/[[:space:]]*$//' \
-        )
-        
-        LLD_VER=$( \
-            "${CLANG_ROOTDIR}/bin/ld.lld" --version 2>/dev/null | \
-            head -n 1 \
-        )
+        # Clang Version
+        CLANG_VER=$("${CLANG_ROOTDIR}/bin/clang" --version 2>/dev/null | head -n 1)
+        # Hapus URL (di dalam kurung) dan spasi berlebih
+        CLANG_VER=$(echo "${CLANG_VER}" | sed -E 's/\(http.*?\)//g' | tr -s ' ' | sed -E 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+        # LLD Version
+        LLD_VER=$("${CLANG_ROOTDIR}/bin/ld.lld" --version 2>/dev/null | head -n 1)
         
         export KBUILD_COMPILER_STRING="${CLANG_VER} with ${LLD_VER}"
     fi
@@ -285,7 +317,8 @@ function check() {
 function compile() {
     # Safety check untuk toolchain
     if [[ "${KBUILD_COMPILER_STRING}" == "Toolchain Not Found" ]]; then
-         setup_toolchain_env
+         # Panggil lagi jika di setup_env gagal mendapatkan versi
+         setup_toolchain_env 
          if [[ "${KBUILD_COMPILER_STRING}" == "Toolchain Not Found" ]]; then
              echo "Error: Toolchain (Clang) tidak ditemukan di ${CLANG_ROOTDIR}." >&2
              exit 1
@@ -304,6 +337,7 @@ function compile() {
     # 1. KONFIGURASI DEFCONFIG AWAL
     echo "Membuat defconfig awal..."
     local PATH_CLANG="${CLANG_ROOTDIR}/bin:${PATH}"
+    # Komando make dalam subshell untuk menghindari polusi PATH global
     (export PATH="${PATH_CLANG}"; make -j$(nproc) O="${KERNEL_OUTDIR}" ARCH="${ARCH}" "${DEVICE_DEFCONFIG}") || finerr
     
     # --- START Blok Conditional KSU Integration ---
@@ -318,7 +352,7 @@ function compile() {
         # 1.1 Cek Non-GKI & set KVER
         if [[ -f nongki.txt ]]; then
             # Non-GKI: Force KVER ke v0.9.5
-            printf "Warning: Kernel dideteksi non-GKI. Versi KernelSU dipaksa ke v0.9.5.\n"
+            echo "Warning: Kernel dideteksi non-GKI. Versi KernelSU dipaksa ke v0.9.5."
             KVER="v0.9.5"
         fi
 
@@ -328,22 +362,20 @@ function compile() {
             local KSU_BASH_ARG="${KVER}"
             local KSU_SOURCE_TYPE="tiann/KernelSU"
             
+            # Logika KernelSU pihak ketiga (dioptimalkan)
             if [[ "${KSU_OTHER_ENABLE}" == "true" ]]; then
-                # Logika KernelSU pihak ketiga
                 KSU_SOURCE_TYPE="KSU/SukiSU Kustom"
                 
-                # Deteksi format URL dan set KSU_SETUP_URL/KSU_BASH_ARG
-                if [[ "${KSU_OTHER_URL}" =~ ^https://github.com/ ]]; then
-                    KSU_SETUP_URL="${KSU_OTHER_URL}/raw/${KSU_VERSION}/kernel/setup.sh"
+                if [[ "${KSU_EXPERIMENTAL}" == "true" ]]; then
+                    KSU_SETUP_URL="https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh"
+                    KSU_BASH_ARG="susfs-main"
+                # Deteksi format URL dan set KSU_SETUP_URL/KSU_BASH_ARG (tidak perlu regex ganda)
+                elif [[ "${KSU_OTHER_URL}" =~ ^https://github.com/ ]]; then
+                    KSU_SETUP_URL="${KSU_OTHER_URL/github.com/raw.githubusercontent.com/}/${KSU_VERSION}/kernel/setup.sh"
                 elif [[ "${KSU_OTHER_URL}" =~ ^https://raw.githubusercontent.com/ ]]; then
                     KSU_SETUP_URL="${KSU_OTHER_URL}/${KSU_VERSION}/kernel/setup.sh"
                 else
                     echo "Error: KSU_OTHER_URL tidak dikenal." >&2; finerr
-                fi
-
-                if [[ "${KSU_EXPERIMENTAL}" == "true" ]]; then
-                    KSU_SETUP_URL="https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh"
-                    KSU_BASH_ARG="susfs-main"
                 fi
             fi
             
@@ -362,19 +394,24 @@ function compile() {
             
             # Cek KPROBES di .config, jika aktif, ubah KSU=y ke KSU=m
             if grep -q "CONFIG_KPROBES=y" "${DEFCONFIG_PATH}" 2>/dev/null; then
-                sed -i 's/CONFIG_KSU=y/CONFIG_KSU=m/g' "${DEFCONFIG_PATH}"
-                echo "CONFIG_KSU diubah menjadi 'm' di ${DEFCONFIG_PATH}."
+                # Menggunakan sed -i yang lebih hati-hati (tanpa backup)
+                sed -i 's/\(CONFIG_KSU=\)y/\1m/g' "${DEFCONFIG_PATH}"
+                echo "CONFIG_KSU diubah menjadi 'm' di ${DEFCONFIG_PATH} (KPROBES Aktif)."
             else
                 # Jika KPROBES nonaktif, ubah default di Kconfig KernelSU
-                sed -i 's/default y/default m/' drivers/kernelsu/Kconfig
+                # Asumsi Kconfig belum dimuat ke .config, jadi modif Kconfig source
+                sed -i 's/\(default\) y/\1 m/' drivers/kernelsu/Kconfig
                 echo "Default KSU diubah menjadi 'm' di Kconfig KernelSU (karena KPROBES nonaktif)."
             fi
             
         # 2.2 LKM NONAKTIF & NON-GKI AKTIF (Logika Patching/Cocci)
         elif [[ -f nongki.txt ]]; then
-            
-            # Kondisi Patching: Non-GKI (nongki.txt ada) && KPROBES mati && skip-patch mati && Cocci diizinkan
+            local KPROBES_ACTIVE=0
             if grep -q "CONFIG_KPROBES=y" "${DEFCONFIG_PATH}" 2>/dev/null; then
+                KPROBES_ACTIVE=1
+            fi
+            
+            if [[ "${KPROBES_ACTIVE}" -eq 1 ]]; then
                 echo "CONFIG_KPROBES aktif di Non-GKI, skip patch Non-GKI."
             elif [[ "${KSU_SKIP_PATCH}" == "true" ]]; then
                 echo "ksu-skip-patch aktif, skip patch Non-GKI."
@@ -387,7 +424,7 @@ function compile() {
                     echo "Cocci/Semantic Patch berhasil diterapkan."
                 else
                     echo "Peringatan: Script Cocci '${COCCI_SCRIPT}' tidak ditemukan. Lewati patching Non-GKI."
-                fi
+                end
             else
                  echo "Cocci/Semantic Patch dilewati karena COCCI_ENABLE nonaktif."
             fi
@@ -395,6 +432,7 @@ function compile() {
         
         # 3. SINKRONISASI KONFIGURASI
         echo "Mensinkronkan konfigurasi (olddefconfig) untuk menerapkan perubahan KSU/LKM."
+        # Komando make dalam subshell untuk menghindari polusi PATH global
         (export PATH="${PATH_CLANG}"; make -j$(nproc) O="${KERNEL_OUTDIR}" ARCH="${ARCH}" olddefconfig) || finerr 
         
     else
@@ -407,37 +445,40 @@ function compile() {
     echo "Lanjutkan ke kompilasi Image.gz dan dtbo.img."
     
     # 4. Kompilasi
-    local PATH="${CLANG_ROOTDIR}/bin:${PATH}"
+    local PATH_BUILD="${CLANG_ROOTDIR}/bin:${PATH}"
     local CC_PREFIX="aarch64-linux-gnu-"
     local CC32_PREFIX="arm-linux-gnueabi-"
 
-    # Jika ARCH bukan arm64, set prefix sesuai kebutuhan (asumsi arm64 yang paling umum)
+    # Memastikan toolchain prefix dikelola dengan baik
     if [[ "${ARCH}" != "arm64" ]]; then
-        # Biarkan default jika tidak ada logika khusus, atau tambahkan logika untuk ARM/x86 jika diperlukan
         echo "Peringatan: ARCH bukan arm64. Menggunakan default aarch64/arm32 toolchain prefix." >&2
     fi
 
-    # Target make Image.gz dan dtbo.img
-    make -j$(nproc) ARCH="${ARCH}" O="${KERNEL_OUTDIR}" \
-        LLVM="1" \
-        LLVM_IAS="1" \
-        CC="clang" \
-        AR="llvm-ar" \
-        AS="llvm-as" \
-        LD="ld.lld" \
-        NM="llvm-nm" \
-        OBJCOPY="llvm-objcopy" \
-        OBJDUMP="llvm-objdump" \
-        OBJSIZE="llvm-size" \
-        READELF="llvm-readelf" \
-        STRIP="llvm-strip" \
-        HOSTCC="clang" \
-        HOSTCXX="clang++" \
-        HOSTLD="ld.lld" \
-        CROSS_COMPILE="${CC_PREFIX}" \
-        CROSS_COMPILE_ARM32="${CC32_PREFIX}" \
-        CROSS_COMPILE_COMPAT="${CC32_PREFIX}" \
-        Image.gz dtbo.img || finerr 
+    # Komando make dalam subshell untuk menjaga PATH
+    (
+        export PATH="${PATH_BUILD}"
+
+        make -j$(nproc) ARCH="${ARCH}" O="${KERNEL_OUTDIR}" \
+            LLVM="1" \
+            LLVM_IAS="1" \
+            CC="clang" \
+            AR="llvm-ar" \
+            AS="llvm-as" \
+            LD="ld.lld" \
+            NM="llvm-nm" \
+            OBJCOPY="llvm-objcopy" \
+            OBJDUMP="llvm-objdump" \
+            OBJSIZE="llvm-size" \
+            READELF="llvm-readelf" \
+            STRIP="llvm-strip" \
+            HOSTCC="clang" \
+            HOSTCXX="clang++" \
+            HOSTLD="ld.lld" \
+            CROSS_COMPILE="${CC_PREFIX}" \
+            CROSS_COMPILE_ARM32="${CC32_PREFIX}" \
+            CROSS_COMPILE_COMPAT="${CC32_PREFIX}" \
+            Image.gz dtbo.img
+    ) || finerr 
         
     if [[ ! -f "${IMAGE}" ]]; then
 	    echo "Error: Image.gz tidak ditemukan setelah kompilasi." >&2
@@ -447,43 +488,55 @@ function compile() {
     # Kloning AnyKernel dan menyalin Image
     local ANYKERNEL_DIR="${CIRRUS_WORKING_DIR}/AnyKernel"
     rm -rf "${ANYKERNEL_DIR}" 
-	git clone --depth=1 "${ANYKERNEL}" "${ANYKERNEL_DIR}" || finerr
+    # Clone AnyKernel (tanpa --depth=1 karena tidak semua repo AnyKernel adalah git repo)
+	git clone "${ANYKERNEL}" "${ANYKERNEL_DIR}" || finerr 
 	cp "${IMAGE}" "${DTBO}" "${ANYKERNEL_DIR}" || finerr
 }
 
-# Mendapatkan informasi commit dan kernel
+# Mendapatkan informasi commit dan kernel (Dioptimalkan)
 function get_info() {
     cd "${KERNEL_ROOTDIR}"
     
-    # Ambil versi kernel dari .config (lebih akurat sebelum UTS_VERSION dibuat)
-    export KERNEL_VERSION=$(grep 'Linux/arm64' "${KERNEL_OUTDIR}/.config" | cut -d " " -f3 || echo "N/A")
+    # Ambil versi kernel dari .config 
+    # Menggunakan regex/sed yang lebih cepat daripada cut/grep/awk berantai
+    export KERNEL_VERSION=$(sed -nE 's/^# Linux\/(arm|arm64) version ([0-9.]+)\.[0-9]+\.([0-9]+)\..*/\2/p' "${KERNEL_OUTDIR}/.config" 2>/dev/null || echo "N/A")
+    
     # UTS_VERSION akan ada setelah make Image.gz berhasil
-    export UTS_VERSION=$(grep 'UTS_VERSION' "${KERNEL_OUTDIR}/include/generated/compile.h" 2>/dev/null | cut -d '"' -f2 || echo "N/A")
+    # Menggunakan sed untuk ekstraksi string
+    export UTS_VERSION=$(sed -nE 's/.*#define UTS_VERSION "(.*)"/\1/p' "${KERNEL_OUTDIR}/include/generated/compile.h" 2>/dev/null || echo "N/A")
     
     # Inisialisasi default N/A
     export LATEST_COMMIT="Source Code Downloaded (No Git Info)"
     export COMMIT_CHANGE="N/A"
     export COMMIT_BY="N/A"
     export BRANCH="N/A"
-    export KERNEL_SOURCE="N/A"
-    export KERNEL_BRANCH="N/A"
+    export KERNEL_SOURCE="${KERNEL_SOURCE_URL:-N/A}"
+    export KERNEL_BRANCH="${KERNEL_BRANCH_TO_CLONE:-N/A}"
     
+    # Cek direktori Git
     if [[ -d "${KERNEL_ROOTDIR}/.git" ]]; then
-        # Gunakan %h untuk commit singkat dan pastikan ada data sebelum diekspor
-        export LATEST_COMMIT="$(git log --pretty=format:'%s' -1 2>/dev/null || echo "N/A")"
-        export COMMIT_CHANGE="$(git log --pretty=format:'%H' -1 2>/dev/null || echo "N/A")"
-        export COMMIT_BY="$(git log --pretty=format:'by %an' -1 2>/dev/null || echo "N/A")"
+        # Menggunakan format log tunggal untuk efisiensi
+        local GIT_LOG
+        GIT_LOG=$(git log --pretty=format:'%s%n%H%nby %an' -1 2>/dev/null) || true # Izinkan kegagalan
+
+        if [[ -n "${GIT_LOG}" ]]; then
+            # Memecah string log menjadi variabel dengan read
+            readarray -t LOG_ARRAY <<< "${GIT_LOG}"
+            export LATEST_COMMIT="${LOG_ARRAY[0]:-N/A}"
+            export COMMIT_CHANGE="${LOG_ARRAY[1]:-N/A}"
+            export COMMIT_BY="${LOG_ARRAY[2]:-N/A}"
+        fi
         
-        if [[ -n "${KERNEL_BRANCH_TO_CLONE}" ]]; then
-            export BRANCH="${KERNEL_BRANCH_TO_CLONE}"
-        else
+        if [[ -z "${KERNEL_BRANCH_TO_CLONE}" ]]; then
             export BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "N/A")"
+        else
+            export BRANCH="${KERNEL_BRANCH_TO_CLONE}"
         fi
 
-        export KERNEL_SOURCE="${KERNEL_SOURCE_URL}"
-        export KERNEL_BRANCH="${KERNEL_BRANCH_TO_CLONE}"
+        # KERNEL_SOURCE sudah diset di setup_env, tidak perlu diubah kecuali perlu verifikasi URL
     fi
     
+    # Tambahkan info branch Clang jika ada
     local CLANG_INFO="${KBUILD_COMPILER_STRING}"
     if [[ -d "${CLANG_ROOTDIR}/.git" ]] && [[ -n "${CLANG_BRANCH_TO_CLONE}" ]]; then
         CLANG_INFO="${CLANG_INFO} (Branch: ${CLANG_BRANCH_TO_CLONE})"
@@ -491,7 +544,7 @@ function get_info() {
     export KBUILD_COMPILER_STRING="${CLANG_INFO}"
 }
 
-# Push kernel ke Telegram
+# Push kernel ke Telegram (Dioptimalkan)
 function push() {
     local ANYKERNEL_DIR="${CIRRUS_WORKING_DIR}/AnyKernel"
     cd "${ANYKERNEL_DIR}"
@@ -515,63 +568,81 @@ function push() {
     local KSU_STATUS=""
     if [[ "${KSU_ENABLE}" == "true" ]]; then
         KSU_STATUS="KernelSU: ✅ Enabled"
-        if [[ "${KSU_LKM_ENABLE}" == "true" ]]; then
-            KSU_STATUS="${KSU_STATUS} (LKM)"
-        else
-            KSU_STATUS="${KSU_STATUS} (Built-in)"
-        fi
+        KSU_STATUS+=$([[ "${KSU_LKM_ENABLE}" == "true" ]] && echo " (LKM)" || echo " (Built-in)")
 
         local KSU_PATCH_INFO=""
         if [[ -f "${KERNEL_ROOTDIR}/nongki.txt" ]]; then
              KSU_PATCH_INFO="Non-GKI: Aktif"
              local DEFCONFIG_PATH="${KERNEL_OUTDIR}/.config"
+             
              if grep -q "CONFIG_KPROBES=y" "${DEFCONFIG_PATH}" 2>/dev/null; then
-                 KSU_PATCH_INFO="${KSU_PATCH_INFO}, Patch: Lewat (KPROBES Aktif)"
+                 KSU_PATCH_INFO+=", Patch: Lewat (KPROBES Aktif)"
              elif [[ "${KSU_SKIP_PATCH}" == "true" ]]; then
-                 KSU_PATCH_INFO="${KSU_PATCH_INFO}, Patch: Lewat (Manual)"
+                 KSU_PATCH_INFO+=", Patch: Lewat (Manual)"
              elif [[ "${COCCI_ENABLE}" == "true" ]]; then
-                 KSU_PATCH_INFO="${KSU_PATCH_INFO}, Patch: Cocci Diterapkan"
+                 KSU_PATCH_INFO+=", Patch: Cocci Diterapkan"
              else
-                 KSU_PATCH_INFO="${KSU_PATCH_INFO}, Patch: Lewat (Cocci Nonaktif)"
+                 KSU_PATCH_INFO+=", Patch: Lewat (Cocci Nonaktif)"
              fi
         fi
-        KSU_STATUS="${KSU_STATUS} (Ver: ${KSU_VERSION}) ${KSU_PATCH_INFO}"
+        KSU_STATUS+=" (Ver: ${KSU_VERSION}) ${KSU_PATCH_INFO}"
         
     else
         KSU_STATUS="KernelSU: 🚫 Disabled (Clean Build)"
     fi
     
     local CHANGES_LINK_TEXT="N/A"
+    # Menggunakan KERNEL_SOURCE yang sudah diset di get_info (dengan default N/A)
     if [[ "${KERNEL_SOURCE}" != "N/A" ]] && [[ "${COMMIT_CHANGE}" != "N/A" ]]; then
-        # Asumsi KERNEL_SOURCE adalah URL Git
+        # Mengganti .git pada URL dengan string kosong
         CHANGES_LINK_TEXT="<a href=\"${KERNEL_SOURCE/%.git/}/commit/${COMMIT_CHANGE}\">Here</a>"
     fi
     
+    # Gunakan printf untuk string multi-line yang lebih bersih
+    printf -v CAPTION_MSG "
+<b>✅ Build Finished!</b>
+==========================
+<b>📦 Kernel:</b> %s
+<b>📱 Device:</b> %s
+<b>👤 Owner:</b> %s
+<b>🛠️ Status:</b> %s
+<b>🏚️ Linux version:</b> %s
+<b>🌿 Branch:</b> %s
+<b>🎁 Top commit:</b> %s
+<b>📚 SHA1:</b> <code>%s</code>
+<b>📚 MD5:</b> <code>%s</code>
+<b>📚 SHA256:</b> <code>%s</code>
+<b>👩‍💻 Commit author:</b> %s
+<b>🐧 UTS version:</b> %s
+<b>💡 Compiler:</b> %s
+<b>💡 ARCH:</b> %s
+==========================
+<b>⏱️ Compile took:</b> %d minute(s) and %d second(s).
+<b>⚙️ Changes:</b> %s" \
+    "${KERNEL_NAME}" \
+    "${DEVICE_CODENAME}" \
+    "${CIRRUS_REPO_OWNER:-N/A}" \
+    "${KSU_STATUS}" \
+    "${KERNEL_VERSION}" \
+    "${BRANCH}" \
+    "${LATEST_COMMIT}" \
+    "${ZIP_SHA1}" \
+    "${ZIP_MD5}" \
+    "${ZIP_SHA256}" \
+    "${COMMIT_BY}" \
+    "${UTS_VERSION}" \
+    "${KBUILD_COMPILER_STRING}" \
+    "${ARCH}" \
+    "${MINUTES}" \
+    "${SECONDS}" \
+    "${CHANGES_LINK_TEXT}"
+
     # Kirim dokumen ZIP
     curl -F document=@"${ZIP_NAME}" "${BOT_DOC_URL}" \
         -F chat_id="${TG_CHAT_ID}" \
         -F "disable_web_page_preview=true" \
         -F "parse_mode=html" \
-        -F caption="
-<b>✅ Build Finished!</b>
-==========================
-<b>📦 Kernel:</b> ${KERNEL_NAME}
-<b>📱 Device:</b> ${DEVICE_CODENAME}
-<b>👤 Owner:</b> ${CIRRUS_REPO_OWNER:-N/A}
-<b>🛠️ Status:</b> ${KSU_STATUS}
-<b>🏚️ Linux version:</b> ${KERNEL_VERSION}
-<b>🌿 Branch:</b> ${BRANCH}
-<b>🎁 Top commit:</b> ${LATEST_COMMIT}
-<b>📚 SHA1:</b> <code>${ZIP_SHA1}</code>
-<b>📚 MD5:</b> <code>${ZIP_MD5}</code>
-<b>📚 SHA256:</b> <code>${ZIP_SHA256}</code>
-<b>👩‍💻 Commit author:</b> ${COMMIT_BY}
-<b>🐧 UTS version:</b> ${UTS_VERSION}
-<b>💡 Compiler:</b> ${KBUILD_COMPILER_STRING}
-<b>💡 ARCH:</b> ${ARCH}
-==========================
-<b>⏱️ Compile took:</b> ${MINUTES} minute(s) and ${SECONDS} second(s).
-<b>⚙️ Changes:</b> ${CHANGES_LINK_TEXT}"
+        -F caption="${CAPTION_MSG}"
 }
 
 ## Alur Utama
