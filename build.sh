@@ -184,7 +184,7 @@ function setup_env() {
     # Variabel kompilator tambahan (Diperlukan untuk perbaikan sintaksis)
     export USE_COMPILER_DEFAULT="${USE_COMPILER_DEFAULT:-true}"
     export USE_COMPILER_EXTRA="${USE_COMPILER_EXTRA:-}"
-    export BUILD_TYPE="${BUILD_TYPE:-1}" # 1: Image.gz dtbo.img, 2: Image.gz, auto: Image.gz dtbo.img
+    export BUILD_TYPE="${BUILD_TYPE:-1}" # 1: Image.gz dtbo.img, 2: Image.gz, auto: otomatis
 
     # Menyimpan waktu mulai
     export START=$(date +"%s")
@@ -441,7 +441,7 @@ function compile() {
     elif [[ "${BUILD_TYPE}" == "2" ]]; then
         BUILD_TARGETS="Image.gz"
     elif [[ "${BUILD_TYPE}" == "auto" ]]; then
-        BUILD_TARGETS="Image.gz dtbo.img" # Asumsi default "auto" adalah build penuh
+        BUILD_TARGETS="" # Asumsi default "auto" adalah build otomatis dari kode source kernel anda
     fi
     
     # Target make Image.gz dan dtbo.img

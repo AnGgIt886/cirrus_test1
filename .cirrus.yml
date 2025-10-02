@@ -55,7 +55,7 @@ env:
 
 task:
   name: "Kernel Build.."
-  timeout_in: 20m
+  timeout_in: 120m
   container:
     image: mhmmdfdlyas/dockerfile:k-ubuntu
     cpu: 8
