@@ -167,7 +167,7 @@ function setup_env() {
     export KERNEL_NAME="${KERNEL_NAME:-mrt-Kernel}" # Default ditambahkan
     
     # Atur path relatif ke CIRRUS_WORKING_DIR
-    export CLANG_DIR="${CLANG_DIR:-${CIRRUS_WORKING_DIR}/greenforce-clang}" 
+    export CLANG_DIR="${CLANG_DIR:-${CIRRUS_WORKING_DIR}/mrt-clang}" 
     export KERNEL_ROOTDIR="${KERNEL_ROOTDIR:-${CIRRUS_WORKING_DIR}/kernel}" 
     export COCCI_SCRIPT_DIR="${COCCI_SCRIPT_DIR:-${CIRRUS_WORKING_DIR}/cocci}" 
     

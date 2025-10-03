@@ -19,9 +19,9 @@ env:
   KERNEL_ROOTDIR: $CIRRUS_WORKING_DIR/$DEVICE_CODENAME
   
   # Toolchain
-  CLANG_URL: https://github.com/greenforce-project/greenforce_clang/releases/download/14092025/greenforce-clang-22.0.0git-14092025.tar.gz
+  CLANG_URL: https://github.com/MRT-project/mrt_clang/releases/download/03102025/mrt-clang-22.0.0git-03102025.tar.gz
   CLANG_BRANCH_TO_CLONE: 
-  CLANG_DIR: $CIRRUS_WORKING_DIR/greenforce-clang
+  CLANG_DIR: $CIRRUS_WORKING_DIR/mrt-clang
   
   # Anykernel
   ANYKERNEL: https://github.com/frstprjkt/AnyKernel3
