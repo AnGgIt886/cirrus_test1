@@ -438,7 +438,7 @@ function compile() {
     
     if [[ "${BUILD_TYPE}" == "1" ]]; then
         BUILD_TARGETS="Image.gz dtbo.img"
-    else [[ "${BUILD_TYPE}" == "2" ]]; then
+    elif [[ "${BUILD_TYPE}" == "2" ]]; then
         BUILD_TARGETS="Image.gz"
     fi
     
@@ -463,7 +463,11 @@ function compile() {
     local ANYKERNEL_DIR="${CIRRUS_WORKING_DIR}/AnyKernel"
     rm -rf "${ANYKERNEL_DIR}" 
 	git clone --depth=1 "${ANYKERNEL}" "${ANYKERNEL_DIR}" || finerr
-	cp "${BUILD_TARGETS}" "${ANYKERNEL_DIR}" || finerr
+	if [[ "${BUILD_TYPE}" == "1" ]]; then
+        cp "${IMAGE}" "${DTBO}" "${ANYKERNEL_DIR}" || finerr
+    elif [[ "${BUILD_TYPE}" == "2" ]]; then
+        cp "${IMAGE}" "${ANYKERNEL_DIR}" || finerr
+    fi
 }
 
 # Mendapatkan informasi commit dan kernel
