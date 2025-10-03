@@ -14,8 +14,8 @@ env:
   BUILD_HOST: mrtproject
   
   # Kernel source
-  KERNEL_SOURCE_URL: https://github.com/MRT-project/valeryn_xiaomi_sm6115
-  KERNEL_BRANCH_TO_CLONE: master
+  KERNEL_SOURCE_URL: https://github.com/frstprjkt/valeryn_xiaomi_sm6115
+  KERNEL_BRANCH_TO_CLONE: su/android13
   KERNEL_ROOTDIR: $CIRRUS_WORKING_DIR/$DEVICE_CODENAME
   
   # Toolchain
