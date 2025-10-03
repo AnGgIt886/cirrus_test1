@@ -43,10 +43,10 @@ env:
   # BUILD TYPE
   # CC="clang" dan lain lain
   # Jika set ke false anda perlu menggunakan USE_COMPILER_EXTRA
-  USE_COMPILER_DEFAULT: true
+  USE_COMPILER_DEFAULT: false
   # contoh CC="clang" AR="llvm-ar" AS="llvm-as" LD="ld.lld" NM="llvm-nm" OBJCOPY="llvm-objcopy" OBJDUMP="llvm-objdump" OBJSIZE="llvm-size" READELF="llvm-readelf" STRIP="llvm-strip" HOSTCC="clang" HOSTCXX="clang++" HOSTLD="ld.lld"
   USE_COMPILER_EXTRA:
-  # (1= image.gz dan dtbo.img) (2= image.gz saja) (auto= otomatis)
+  # (1= image.gz dan dtbo.img) (2= image.gz saja)
   BUILD_TYPE: 1
   
   # Telegram

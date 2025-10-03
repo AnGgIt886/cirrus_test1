@@ -438,10 +438,8 @@ function compile() {
     
     if [[ "${BUILD_TYPE}" == "1" ]]; then
         BUILD_TARGETS="Image.gz dtbo.img"
-    elif [[ "${BUILD_TYPE}" == "2" ]]; then
+    else [[ "${BUILD_TYPE}" == "2" ]]; then
         BUILD_TARGETS="Image.gz"
-    elif [[ "${BUILD_TYPE}" == "auto" ]]; then
-        BUILD_TARGETS="" # Asumsi default "auto" adalah build otomatis dari kode source kernel anda
     fi
     
     # Target make Image.gz dan dtbo.img
@@ -453,7 +451,6 @@ function compile() {
         ${COMPILER_ARGS} \
         CROSS_COMPILE="${CC_PREFIX}" \
         CROSS_COMPILE_ARM32="${CC32_PREFIX}" \
-        CROSS_COMPILE_COMPAT="${CC32_PREFIX}" \
         ${BUILD_TARGETS} \
         || finerr)
         
@@ -466,7 +463,7 @@ function compile() {
     local ANYKERNEL_DIR="${CIRRUS_WORKING_DIR}/AnyKernel"
     rm -rf "${ANYKERNEL_DIR}" 
 	git clone --depth=1 "${ANYKERNEL}" "${ANYKERNEL_DIR}" || finerr
-	cp "${IMAGE}" "${DTBO}" "${ANYKERNEL_DIR}" || finerr
+	cp "${BUILD_TARGETS}" "${ANYKERNEL_DIR}" || finerr
 }
 
 # Mendapatkan informasi commit dan kernel
